@@ -19,7 +19,7 @@ the agent's behaviour.
 
 ```sh
 cargo run     # watch the boundary judge a batch of agent proposals
-cargo test    # 14 tests covering the invariants, the outcome gate, and reversibility
+cargo test    # 15 tests: the invariants, the gates, reversibility, and the end-to-end batch
 ```
 
 No dependencies. The entire trusted computing base is the code under `src/`.

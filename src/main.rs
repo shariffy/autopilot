@@ -24,11 +24,23 @@ use verifier::StubVerifier;
 use std::collections::BTreeMap;
 use std::fs;
 
-fn main() {
-    println!("ENVELOPE — trusted core demo");
-    println!("The agent is untrusted. Every proposal passes through the reference");
-    println!("monitor, which produces each verdict below deterministically.\n");
+/// Aggregate result of running a batch of proposals through the harness.
+struct Summary {
+    committed: u32,
+    rejected: u32,
+    denials: BTreeMap<&'static str, u32>,
+    reverted: Vec<String>,
+}
 
+impl Summary {
+    fn rolled_back(&self) -> usize {
+        self.reverted.len()
+    }
+}
+
+/// Build the harness wired to the demo's trusted sources. Shared by `main` and
+/// the end-to-end test so they exercise exactly the same configuration.
+fn demo_harness() -> Harness {
     // Trusted telemetry, seeded out-of-band: a stand-in for a monitoring system
     // the agent cannot write to.
     let telemetry = StubTelemetry::new()
@@ -69,48 +81,68 @@ fn main() {
             },
         );
 
-    let mut harness = Harness::new(Box::new(telemetry), Box::new(verifier));
-    let mut committed = 0;
-    let mut rejected = 0;
-    // Structured signals read back from the harness's return values — proof the
-    // outcomes are machine-usable, not merely lines in a log.
-    let mut denials_by_invariant: BTreeMap<&'static str, u32> = BTreeMap::new();
-    let mut reverted_metrics: Vec<String> = vec![];
+    Harness::new(Box::new(telemetry), Box::new(verifier))
+}
+
+/// Run every proposal through the harness, returning the aggregate verdicts.
+/// Reads the structured `Outcome` return values — proof they are machine-usable,
+/// not merely lines in a log.
+fn run(harness: &mut Harness) -> Summary {
+    let mut summary = Summary {
+        committed: 0,
+        rejected: 0,
+        denials: BTreeMap::new(),
+        reverted: vec![],
+    };
 
     for (intent, action) in agent::proposals() {
         println!("──────────────────────────────────────────────────────────");
         match harness.enact(&intent, action) {
-            Outcome::Committed => committed += 1,
+            Outcome::Committed => summary.committed += 1,
             Outcome::Rejected(violations) => {
-                rejected += 1;
+                summary.rejected += 1;
                 for v in &violations {
-                    *denials_by_invariant.entry(v.invariant).or_insert(0) += 1;
+                    *summary.denials.entry(v.invariant).or_insert(0) += 1;
                 }
             }
-            Outcome::RolledBack { breached } => reverted_metrics.push(breached),
+            Outcome::RolledBack { breached } => summary.reverted.push(breached),
         }
     }
+
+    summary
+}
+
+fn main() {
+    println!("ENVELOPE — trusted core demo");
+    println!("The agent is untrusted. Every proposal passes through the reference");
+    println!("monitor, which produces each verdict below deterministically.\n");
+
+    let mut harness = demo_harness();
+    let summary = run(&mut harness);
 
     let world = harness.world();
     println!("══════════════════════════════════════════════════════════");
     println!(
-        "SUMMARY   committed={committed}  rejected={rejected}  rolled_back={}",
-        reverted_metrics.len()
+        "SUMMARY   committed={}  rejected={}  rolled_back={}",
+        summary.committed,
+        summary.rejected,
+        summary.rolled_back()
     );
     println!(
         "WORLD     files={}  deployed={}",
         world.file_count(),
         world.deploy_count()
     );
-    if !denials_by_invariant.is_empty() {
-        let breakdown: Vec<String> = denials_by_invariant
+    if !summary.denials.is_empty() {
+        let breakdown: Vec<String> = summary
+            .denials
             .iter()
             .map(|(invariant, n)| format!("{invariant}={n}"))
             .collect();
         println!("DENIALS   {}", breakdown.join("  "));
     }
-    if !reverted_metrics.is_empty() {
-        println!("REVERTED  {}", reverted_metrics.join(", "));
+    if !summary.reverted.is_empty() {
+        println!("REVERTED  {}", summary.reverted.join(", "));
     }
 
     // Persist the append-only audit trail. An accountability surface has to be
@@ -127,4 +159,29 @@ fn main() {
 
     println!("\nNone of these outcomes required the agent to be trustworthy.");
     println!("The envelope produced them by construction.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Locks in the demo's headline result: the exact verdicts the showcase
+    /// depends on. If a future change alters the boundary's behaviour, this fails
+    /// rather than the demo silently telling a different story.
+    #[test]
+    fn demo_batch_produces_expected_verdicts() {
+        let mut harness = demo_harness();
+        let summary = run(&mut harness);
+
+        assert_eq!(summary.committed, 3);
+        assert_eq!(summary.rejected, 4);
+        assert_eq!(summary.rolled_back(), 1);
+        assert_eq!(summary.reverted, vec!["task_completion".to_string()]);
+        assert_eq!(summary.denials.get("reach"), Some(&2));
+        assert_eq!(summary.denials.get("change_shape"), Some(&1));
+        assert_eq!(summary.denials.get("immutable_policy"), Some(&1));
+
+        assert_eq!(harness.world().file_count(), 2);
+        assert_eq!(harness.world().deploy_count(), 1);
+    }
 }
