@@ -1,0 +1,13 @@
+[package]
+name = "envelope"
+version = "0.1.0"
+edition = "2021"
+description = "A trusted reference monitor that bounds an autonomous agent by construction."
+
+[[bin]]
+name = "envelope"
+path = "src/main.rs"
+
+# Intentionally zero dependencies. The whole point of this crate is to be a
+# small, auditable trusted computing base; every line of trust lives in `src/`.
+[dependencies]
