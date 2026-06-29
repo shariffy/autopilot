@@ -24,6 +24,25 @@ cargo test    # 15 tests: the invariants, the gates, reversibility, and the end-
 
 No dependencies. The entire trusted computing base is the code under `src/`.
 
+### Operating for real
+
+The batch above runs the boundary in-memory to show its *shape*. The same trusted
+kernel also adjudicates real writes to a real repository:
+
+```sh
+# decide one proposed write: reach-check it, apply it, verify with the repo's own
+# build, then commit it or revert it — file body on stdin, verdict (JSON) on stdout
+echo "<file contents>" | cargo run -- adjudicate \
+  --repo ../roli-admin --path src/components/Badge.tsx --intent "add Badge"
+```
+
+`reach` is decided by the *same* `Policy` the demo uses. Reversibility is real
+git: the tree must be clean, the change is committed on a green build or restored
+on a red one. Verification is the repository's own `npm run build` — run *inside*
+the envelope, so the proposer still cannot supply what it is judged by. This is
+the channel the [conductor](../conductor) (the untrusted Claude-driven brain)
+drives; it is the only way the brain can change a file.
+
 ## What you'll see
 
 An untrusted stub agent proposes eight changes — some good, some forbidden,
@@ -80,12 +99,16 @@ src/
   guardrails.rs     trusted outcome-gate policy (SLOs)
   telemetry.rs      trusted source of production health (agent has no handle)
   verifier.rs       trusted source of verification (CI + agentic UI checks)
-  reversible.rs     reversible effects + the encapsulated World
+  reversible.rs     reversible effects + the encapsulated World (in-memory demo)
+  worktree.rs       the REAL git-backed effector + build verifier (adjudicate path)
   decision_log.rs   append-only audit trail
   types.rs          the closed Action / Verdict / Outcome model
   agent.rs          a STUB untrusted agent (stands in for a real model)
-  main.rs           wires it together and runs the demo
+  main.rs           wires it together; runs the demo, or `adjudicate` for real
 ```
+
+The real untrusted agent lives in a separate project — [conductor](../conductor),
+a Claude-driven loop — and reaches the world only through `envelope adjudicate`.
 
 ## Documentation
 
@@ -97,7 +120,11 @@ src/
 
 This is a frontier **demo** of the structural-trust thesis: it runs, it is
 tested, and its boundary is real. It is not a production system. The known gaps
-are tracked honestly as residuals in the [threat model](docs/THREAT_MODEL.md). The
-load-bearing one for a frontend is real CI + agentic UI verification behind the
-`Verifier` trait; the structural keystone is putting the agent across an
-authenticated process seam (the wire-protocol boundary ADR 0002 describes).
+are tracked honestly as residuals in the [threat model](docs/THREAT_MODEL.md).
+
+The structural keystone — putting the agent across a process seam, with the real
+gate on the trusted side — is now built: the [conductor](../conductor) is a real
+Claude-driven agent that can only change the app through `envelope adjudicate`,
+and verification is the app's real build. The remaining load-bearing residual for
+a frontend is agentic **UI** verification (does the rendered page actually work),
+on top of the typecheck/build gate that exists today.

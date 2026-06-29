@@ -31,12 +31,15 @@ construction.
 
 | Actor | Trust | Role |
 |---|---|---|
-| **Agent** | **Untrusted** | Proposes actions. Assumed adversarial: may lie, escalate, or try to bypass. |
-| **Reference monitor** (`harness`, `policy`, `invariants`, `guardrails`, `reversible`) | **Trusted (the TCB)** | The single chokepoint. Small and auditable on purpose. |
+| **Agent** | **Untrusted** | Proposes actions. Assumed adversarial: may lie, escalate, or try to bypass. In the real demo this is the [conductor](../../conductor), a Claude-driven process. |
+| **Reference monitor** (`harness`, `policy`, `invariants`, `guardrails`, `reversible`, `worktree`) | **Trusted (the TCB)** | The single chokepoint. Small and auditable on purpose. |
 | **Telemetry** (`telemetry::Telemetry`) | **Trusted** | The source of truth for production health. The agent has no handle to it. |
-| **The world** (frontend repo + deploy — `reversible::World`) | Protected | Only mutated via the monitor. |
+| **Verifier** (`worktree::BuildVerifier` — the repo's own build) | **Trusted** | Decides "fit to ship"; runs inside the monitor, not the agent. |
+| **The world** (frontend repo + deploy — `reversible::World` in-memory; the real git work tree via `worktree`) | Protected | Only mutated via the monitor. |
 
-The trust boundary is the `Harness::enact` chokepoint: the only path from a
+There are two enaction paths, sharing the same policy kernel: `Harness::enact`
+(the in-memory conceptual demo) and `worktree::adjudicate_write` (the real
+git-backed path behind `envelope adjudicate`). Each is a single chokepoint from a
 proposed action to a real effect.
 
 ## Assumptions (taken as given; if false, the model breaks)
@@ -86,9 +89,13 @@ These are known and **not** yet mitigated. They are the honest edge of the demo.
   in-crate mistake could still reach them. Hard isolation would require splitting
   the core into its own crate or process — deliberately not done, to keep the demo
   a single small crate.
-- **R3 — No process seam yet (discharges A4).** The agent is an in-process stub.
-  The real boundary is a separate process speaking a versioned, validated wire
-  protocol (see ADR 0002). Authentication of that seam is unbuilt.
+- **R3 — Process seam exists; authentication does not (partially discharges A4).**
+  The real agent (the conductor) is now a separate process, and its only write
+  channel is invoking the `envelope adjudicate` binary — it cannot reach the
+  world any other way. What is *not* built is authentication of that seam: trust
+  currently derives from the local process boundary (whoever runs the conductor
+  controls the local exec), not from a versioned, authenticated wire protocol (see
+  ADR 0002). A network-deployed agent would need that.
 - **R4 — Global guardrails only.** SLOs are uniform across services; per-service or
   per-change-class thresholds are not modeled.
 - **R5 — No resource bounds.** Nothing limits the rate or volume of agent
@@ -96,12 +103,25 @@ These are known and **not** yet mitigated. They are the honest edge of the demo.
 - **R6 — Audit trail is not tamper-evident.** It is append-only in memory and
   written to a file; it is not signed or hash-chained, so a compromise of the host
   could rewrite it.
-- **R7 — Verifier integration (discharges A5).** The demo seeds a stub. The gate
-  is only as strong as a real CI + agentic-UI-verification pipeline the agent
-  cannot influence. Until that exists, T3 holds *by construction of the type*
-  (no self-certification) but the "trusted source" is the demo author. This is the
-  load-bearing piece for a frontend: most of the risk is visual/UX regressions
-  that only UI verification catches.
+- **R7 — Verifier: build is real, UI verification is not (partially discharges
+  A5).** The conceptual demo seeds a stub; the real `adjudicate` path runs the
+  repo's own `npm run build` (typecheck + bundle) inside the monitor, so the
+  typecheck/compile half of T3 is genuinely enforced and the agent cannot
+  self-certify. What remains is **agentic UI verification** — actually driving the
+  rendered page to confirm a change works. This is the load-bearing piece for a
+  frontend: most residual risk is visual/UX regressions that compile cleanly but
+  break the page, which only UI verification catches.
+- **R8 — The verifier executes the repo's build (new TCB surface).** Running
+  `npm run build` executes whatever the build pipeline does on the host. The build
+  *definition* is protected — `package.json`, `infra/`, and lockfiles are outside
+  the write allowlist, so the agent cannot alter the verifier it is judged by — but
+  a written source file that the build configuration imports could in principle run
+  at build time. Hardening (sandboxed/network-isolated build, pinned toolchain) is
+  not yet done; the demo runs the build in the local environment.
+- **R9 — Real path not in the unit suite.** `worktree::adjudicate_write` is
+  verified by a documented end-to-end smoke run (it needs `git` and `npm`), not by
+  `cargo test`. The pure kernel it reuses (`reach`, `policy`) *is* unit-tested; the
+  I/O orchestration around it is checked manually.
 
 ## Out of scope
 
