@@ -1,9 +1,13 @@
-# A system that builds an outcome
+# Charter
 
-This repository is a **system** that autonomously maintains a software **outcome**,
-where trust is *structural* — by construction — not behavioral. An untrusted
-frontier model proposes changes; a small trusted core decides their fate. Nothing
-the system does depends on the model behaving well.
+**A system that builds an outcome** — and trusts the autonomous agent that builds
+it *by construction*, not by hoping it behaves.
+
+Charter autonomously maintains a software **outcome**: an untrusted frontier model
+proposes changes; a small trusted core decides their fate. The name is the thesis —
+the agent is *chartered*, free to act and produce an outcome within fixed limits it
+cannot change, with every action verified and reversible. Nothing the system does
+depends on the model behaving well.
 
 It has two parts, and the outcome is deliberately **not** one of them:
 
@@ -55,7 +59,7 @@ repo); point it elsewhere with `ROLI_ADMIN_REPO`. See [conductor/README](conduct
 
 - [conductor/README](conductor/README.md) — the brain, the loop, what lands and what can't
 - [envelope/README](envelope/README.md) — the trusted core, the invariants, how the boundary holds
-- [docs/adr/](docs/adr) — architecture decisions (project name, language for the core, one-system-repo)
+- [docs/adr/](docs/adr) — architecture decisions (core name, language for the core, one-system-repo, naming the system)
 - [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) — assets, trust boundary, threats, and honest residuals
 
 ## Status
