@@ -15,6 +15,9 @@ the agent's behaviour.
 
 > Don't trust the brain. Trust the envelope.
 
+*The trusted core of a larger system — see the [system overview](../README.md) for
+how the core, the brain, and the outcome fit together.*
+
 ## Quick start
 
 ```sh
@@ -33,7 +36,7 @@ kernel also adjudicates real writes to a real repository:
 # decide one proposed write: reach-check it, apply it, verify with the repo's own
 # build, then commit it or revert it — file body on stdin, verdict (JSON) on stdout
 echo "<file contents>" | cargo run -- adjudicate \
-  --repo ../roli-admin --path src/components/Badge.tsx --intent "add Badge"
+  --repo <path-to-outcome> --path src/components/Badge.tsx --intent "add Badge"
 ```
 
 `reach` is decided by the *same* `Policy` the demo uses. Reversibility is real
@@ -112,15 +115,16 @@ a Claude-driven loop — and reaches the world only through `envelope adjudicate
 
 ## Documentation
 
-- [ADR 0001 — Project name](docs/adr/0001-project-name.md)
-- [ADR 0002 — Language for the trusted core](docs/adr/0002-language-for-the-trusted-core.md)
-- [Threat model](docs/THREAT_MODEL.md) — assets, trust boundary, threats T1–T9, and honest residuals
+- [ADR 0001 — Project name](../docs/adr/0001-project-name.md)
+- [ADR 0002 — Language for the trusted core](../docs/adr/0002-language-for-the-trusted-core.md)
+- [ADR 0003 — One system repository; the outcome is external](../docs/adr/0003-one-system-repository-outcome-external.md)
+- [Threat model](../docs/THREAT_MODEL.md) — assets, trust boundary, threats T1–T9, and honest residuals
 
 ## Status
 
 This is a frontier **demo** of the structural-trust thesis: it runs, it is
 tested, and its boundary is real. It is not a production system. The known gaps
-are tracked honestly as residuals in the [threat model](docs/THREAT_MODEL.md).
+are tracked honestly as residuals in the [threat model](../docs/THREAT_MODEL.md).
 
 The structural keystone — putting the agent across a process seam, with the real
 gate on the trusted side — is now built: the [conductor](../conductor) is a real

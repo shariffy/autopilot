@@ -5,8 +5,12 @@ on:
   pull_request:
 
 jobs:
-  check:
+  # The trusted core (Rust). Lives in envelope/.
+  core:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: envelope
     steps:
       - uses: actions/checkout@v4
 
@@ -25,11 +29,30 @@ jobs:
       - name: test
         run: cargo test --all-targets
 
+  # Dependency CVEs in the core (RustSec advisory db).
   audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Fails the build on any dependency with a known CVE (RustSec advisory db).
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: envelope
+
+  # The untrusted brain (TypeScript). Lives in conductor/.
+  brain:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: conductor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: conductor/package-lock.json
+      - name: install
+        run: npm ci
+      - name: typecheck
+        run: npm run typecheck

@@ -1,0 +1,19 @@
+{
+  "name": "conductor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The untrusted brain: a Claude-driven loop that maintains roli-admin, governed by the envelope trust boundary.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.106.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
