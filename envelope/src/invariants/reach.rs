@@ -1,20 +1,37 @@
 //! Reach invariant: *where* the agent may write.
 //!
-//! This is a frontend codebase that consumes an external, provided backend API.
-//! The two lists below ARE the agent's reach over that codebase. Keep them short
-//! enough that a human can take in the whole boundary at a glance — that
-//! readability is the source of the trust.
+//! Reach is not a single global list — it is a **charter**, and which charter is
+//! in force is decided by the outcome's *lifecycle stage*, never by the agent (see
+//! ADR 0005):
+//!
+//! - [`Charter::Maintenance`] — a governed app has launched. Reach is the narrow,
+//!   human-auditable allowlist below; the API contract, secrets, and infra are
+//!   frozen. This is the stage the structural-trust thesis is about.
+//! - [`Charter::Genesis`] — establishment, before launch. The agent is bringing an
+//!   app into existence (or doing structural surgery on adopted code), so it must
+//!   be able to write config, the API client, and auth. Reach is the whole
+//!   workspace *except* the two zones that are never the agent's to touch:
+//!   `secrets/` and `.git/`. Genesis is not bounded by reach alone — it is bounded
+//!   by a disposable workspace, atomic reversibility, and a human launch gate.
 //!
 //! Paths are normalised *lexically* before they are checked, so `.`/`..`
-//! components cannot smuggle a path out of an allowed prefix and into a
-//! forbidden one (e.g. `src/components/../api/client.ts`). Normalisation never
-//! touches the filesystem — these are repository paths, not necessarily real
-//! files.
+//! components cannot smuggle a path out of an allowed prefix and into a forbidden
+//! one (e.g. `src/components/../api/client.ts`). Normalisation never touches the
+//! filesystem — these are repository paths, not necessarily real files.
 
 use crate::types::{Action, Violation};
 
-/// Path prefixes the agent is permitted to write. Anything not matching is
-/// refused by default (deny-by-default).
+/// The reach charter in force over an outcome, selected by lifecycle stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Charter {
+    /// Establishment, pre-launch: the whole workspace minus the never-touch zones.
+    Genesis,
+    /// Post-launch maintenance: the narrow fitted allowlist.
+    Maintenance,
+}
+
+/// Path prefixes the agent may write under the Maintenance charter. Anything not
+/// matching is refused by default (deny-by-default).
 const ALLOWED_WRITE_PREFIXES: &[&str] = &[
     "src/components/",
     "src/features/",
@@ -23,9 +40,9 @@ const ALLOWED_WRITE_PREFIXES: &[&str] = &[
     "config/flags/",
 ];
 
-/// Prefixes that are never writable, listed explicitly so the most sensitive
-/// zones are obvious to an auditor even though deny-by-default already covers
-/// them.
+/// Prefixes that are never writable under Maintenance, listed explicitly so the
+/// most sensitive zones are obvious to an auditor even though deny-by-default
+/// already covers them.
 const FORBIDDEN_WRITE_PREFIXES: &[&str] = &[
     "src/api/",  // the contract/client for the provided backend — not the agent's to change
     "secrets/",  // credentials must never be written into the frontend bundle
@@ -33,40 +50,67 @@ const FORBIDDEN_WRITE_PREFIXES: &[&str] = &[
     "envelope/", // the trusted core may not be edited by the agent it governs
 ];
 
-pub fn check(action: &Action) -> Vec<Violation> {
-    let path = match action {
-        Action::WriteFile { path, .. } => path,
-        _ => return vec![],
-    };
+/// Zones that are never the agent's to touch under *any* charter — even the broad
+/// Genesis charter is confined to the workspace minus these.
+const NEVER_WRITE_PREFIXES: &[&str] = &[
+    "secrets/", // credentials
+    ".git/",    // the version history that makes reversibility well-defined
+];
 
-    let Some(normalized) = normalize(path) else {
-        return vec![Violation {
-            invariant: "reach",
-            reason: format!("`{path}` escapes the repository root"),
-        }];
-    };
+impl Charter {
+    /// Find any reach violations this charter raises for `action`. Pure: no I/O.
+    pub fn check(self, action: &Action) -> Vec<Violation> {
+        let path = match action {
+            Action::WriteFile { path, .. } => path,
+            _ => return vec![],
+        };
 
-    if FORBIDDEN_WRITE_PREFIXES
-        .iter()
-        .any(|p| normalized.starts_with(p))
-    {
-        return vec![Violation {
-            invariant: "reach",
-            reason: format!("`{path}` resolves into an explicitly forbidden zone"),
-        }];
+        let Some(normalized) = normalize(path) else {
+            return vec![Violation {
+                invariant: "reach",
+                reason: format!("`{path}` escapes the repository root"),
+            }];
+        };
+
+        match self {
+            Charter::Genesis => self.check_genesis(path, &normalized),
+            Charter::Maintenance => self.check_maintenance(path, &normalized),
+        }
     }
 
-    if !ALLOWED_WRITE_PREFIXES
-        .iter()
-        .any(|p| normalized.starts_with(p))
-    {
-        return vec![Violation {
-            invariant: "reach",
-            reason: format!("`{path}` is outside the write allowlist"),
-        }];
+    fn check_genesis(self, path: &str, normalized: &str) -> Vec<Violation> {
+        if NEVER_WRITE_PREFIXES.iter().any(|p| normalized.starts_with(p)) {
+            return vec![Violation {
+                invariant: "reach",
+                reason: format!("`{path}` resolves into a never-writable zone"),
+            }];
+        }
+        vec![]
     }
 
-    vec![]
+    fn check_maintenance(self, path: &str, normalized: &str) -> Vec<Violation> {
+        if FORBIDDEN_WRITE_PREFIXES
+            .iter()
+            .any(|p| normalized.starts_with(p))
+        {
+            return vec![Violation {
+                invariant: "reach",
+                reason: format!("`{path}` resolves into an explicitly forbidden zone"),
+            }];
+        }
+
+        if !ALLOWED_WRITE_PREFIXES
+            .iter()
+            .any(|p| normalized.starts_with(p))
+        {
+            return vec![Violation {
+                invariant: "reach",
+                reason: format!("`{path}` is outside the write allowlist"),
+            }];
+        }
+
+        vec![]
+    }
 }
 
 /// Lexically normalise a repository path, resolving `.` and `..` without
@@ -91,46 +135,83 @@ mod tests {
     use super::*;
     use crate::types::Action;
 
-    fn write(path: &str) -> Vec<Violation> {
-        check(&Action::WriteFile {
+    fn maintenance(path: &str) -> Vec<Violation> {
+        Charter::Maintenance.check(&Action::WriteFile {
+            path: path.to_string(),
+            bytes: 1,
+        })
+    }
+
+    fn genesis(path: &str) -> Vec<Violation> {
+        Charter::Genesis.check(&Action::WriteFile {
             path: path.to_string(),
             bytes: 1,
         })
     }
 
     #[test]
-    fn allowed_path_passes() {
-        assert!(write("src/components/UserTable.tsx").is_empty());
+    fn maintenance_allows_allowlisted_path() {
+        assert!(maintenance("src/components/UserTable.tsx").is_empty());
     }
 
     #[test]
-    fn forbidden_path_denied() {
+    fn maintenance_forbids_api_contract() {
         // The provided backend contract is not the agent's to edit.
-        assert!(!write("src/api/client.ts").is_empty());
+        assert!(!maintenance("src/api/client.ts").is_empty());
     }
 
     #[test]
-    fn outside_allowlist_denied() {
-        assert!(!write("scripts/deploy.sh").is_empty());
+    fn maintenance_forbids_outside_allowlist() {
+        assert!(!maintenance("scripts/deploy.sh").is_empty());
     }
 
     #[test]
-    fn traversal_into_forbidden_is_denied() {
+    fn maintenance_forbids_traversal_into_forbidden() {
         // A `..` must not move the path out of an allowed prefix and into a
         // forbidden one.
-        assert!(!write("src/components/../api/client.ts").is_empty());
+        assert!(!maintenance("src/components/../api/client.ts").is_empty());
     }
 
     #[test]
-    fn escaping_root_is_denied() {
-        assert!(!write("../secrets").is_empty());
-        assert!(!write("src/components/../../secrets/tokens.ts").is_empty());
+    fn maintenance_forbids_escaping_root() {
+        assert!(!maintenance("../secrets").is_empty());
+        assert!(!maintenance("src/components/../../secrets/tokens.ts").is_empty());
     }
 
-    /// Exhaustive check over every path up to length 4 built from a small
-    /// alphabet that mixes `.`/`..` with allowed and forbidden segments: every
-    /// *accepted* path, once normalised, must land inside an allowed prefix and
-    /// never inside a forbidden one.
+    #[test]
+    fn genesis_allows_what_maintenance_freezes() {
+        // Genesis must be able to bring the app into existence: config, the API
+        // client, auth — the very things Maintenance freezes.
+        assert!(genesis("package.json").is_empty());
+        assert!(genesis("vite.config.ts").is_empty());
+        assert!(genesis("src/api/client.ts").is_empty());
+        assert!(genesis("src/lib/auth.tsx").is_empty());
+    }
+
+    #[test]
+    fn genesis_still_forbids_never_zones() {
+        // Even the broad charter never writes credentials or rewrites history.
+        assert!(!genesis("secrets/tokens.ts").is_empty());
+        assert!(!genesis(".git/config").is_empty());
+    }
+
+    #[test]
+    fn genesis_still_refuses_escaping_root() {
+        assert!(!genesis("../../etc/passwd").is_empty());
+        // ...and traversal back into a never-zone after a detour.
+        assert!(!genesis("src/x/../../secrets/tokens.ts").is_empty());
+    }
+
+    #[test]
+    fn dotgitignore_is_not_the_git_dir() {
+        // `.gitignore` is a normal file; only the `.git/` directory is off-limits.
+        assert!(genesis(".gitignore").is_empty());
+    }
+
+    /// Exhaustive check over every path up to length 4 built from a small alphabet
+    /// that mixes `.`/`..` with allowed and forbidden segments: under *each*
+    /// charter, every *accepted* path, once normalised, must stay within that
+    /// charter's permitted region and never inside its forbidden zones.
     #[test]
     fn accepted_paths_never_resolve_into_forbidden_zones() {
         const TOKENS: &[&str] = &[
@@ -148,15 +229,22 @@ mod tests {
         enumerate(TOKENS, 4, &mut Vec::new(), &mut paths);
 
         for path in paths {
-            if write(&path).is_empty() {
+            if maintenance(&path).is_empty() {
                 let norm = normalize(&path).expect("an accepted path must normalise");
                 assert!(
                     ALLOWED_WRITE_PREFIXES.iter().any(|p| norm.starts_with(p)),
-                    "accepted but not in allowlist: {path:?} -> {norm:?}"
+                    "maintenance accepted but not in allowlist: {path:?} -> {norm:?}"
                 );
                 assert!(
                     !FORBIDDEN_WRITE_PREFIXES.iter().any(|p| norm.starts_with(p)),
-                    "accepted but resolves into a forbidden zone: {path:?} -> {norm:?}"
+                    "maintenance accepted but resolves into a forbidden zone: {path:?} -> {norm:?}"
+                );
+            }
+            if genesis(&path).is_empty() {
+                let norm = normalize(&path).expect("an accepted path must normalise");
+                assert!(
+                    !NEVER_WRITE_PREFIXES.iter().any(|p| norm.starts_with(p)),
+                    "genesis accepted but resolves into a never-writable zone: {path:?} -> {norm:?}"
                 );
             }
         }

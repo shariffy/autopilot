@@ -18,10 +18,11 @@ mod verifier;
 mod worktree;
 
 use harness::Harness;
+use invariants::reach::Charter;
 use telemetry::StubTelemetry;
 use types::{Action, Outcome, Verdict, Verification};
 use verifier::StubVerifier;
-use worktree::{BuildVerifier, Disposition};
+use worktree::{BuildVerifier, Disposition, Establish};
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -119,7 +120,16 @@ fn run(harness: &mut Harness) -> Summary {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
+        // One-shot maintenance edit (the one-stage changeset) and the dry-run seam.
         Some("adjudicate") => adjudicate(&args[2..]),
+        // Trusted setup: establish a workspace baseline from a starting-point.
+        Some("establish") => cmd_establish(&args[2..]),
+        // Changeset lifecycle: begin → stage* → commit (ADR 0005).
+        Some("begin") => cmd_begin(&args[2..]),
+        Some("stage") => cmd_stage(&args[2..]),
+        Some("commit") => cmd_commit(&args[2..]),
+        // Abandon an open changeset: reset the tree to the clean baseline.
+        Some("reset") => cmd_reset(&args[2..]),
         Some(other) => {
             eprintln!("unknown subcommand `{other}`; run with no arguments for the demo");
             ExitCode::from(2)
@@ -191,15 +201,224 @@ fn adjudicate(args: &[String]) -> ExitCode {
     }
 
     let disposition =
-        worktree::adjudicate_write(&repo, &path, &content, &intent, &BuildVerifier::npm_build());
+        worktree::adjudicate_write(&repo, &path, &content, &intent, &BuildVerifier::repo_build());
     emit_disposition(&path, &disposition);
     ExitCode::SUCCESS
+}
+
+// ---- changeset lifecycle: begin → stage* → commit (ADR 0005) ----
+
+/// Open a changeset over a repo: assert a clean baseline, fail closed otherwise.
+fn cmd_begin(args: &[String]) -> ExitCode {
+    let mut flags = Flags::default();
+    if let Err(code) = flags.parse(args) {
+        return code;
+    }
+    let Some(repo_raw) = flags.repo else {
+        emit_error("usage: envelope begin --repo <dir>");
+        return ExitCode::from(2);
+    };
+    let repo = match worktree::resolve_repo(&repo_raw) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("repo `{repo_raw}` not found: {e}"));
+            return ExitCode::from(2);
+        }
+    };
+    emit_disposition("", &worktree::begin(&repo));
+    ExitCode::SUCCESS
+}
+
+/// Stage one write into the open changeset, under the reach charter in force. The
+/// charter is chosen by lifecycle stage (Genesis vs Maintenance), supplied by the
+/// caller — never by the agent, whose write is what is being judged here.
+fn cmd_stage(args: &[String]) -> ExitCode {
+    let mut flags = Flags::default();
+    if let Err(code) = flags.parse(args) {
+        return code;
+    }
+    let (Some(repo_raw), Some(path)) = (flags.repo, flags.path) else {
+        emit_error("usage: envelope stage --repo <dir> --path <repo-relative> --charter <genesis|maintenance>  (file body on stdin)");
+        return ExitCode::from(2);
+    };
+    let charter = match flags.charter.as_deref() {
+        Some("genesis") => Charter::Genesis,
+        Some("maintenance") | None => Charter::Maintenance,
+        Some(other) => {
+            emit_error(&format!("unknown charter `{other}` (genesis|maintenance)"));
+            return ExitCode::from(2);
+        }
+    };
+    let repo = match worktree::resolve_repo(&repo_raw) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("repo `{repo_raw}` not found: {e}"));
+            return ExitCode::from(2);
+        }
+    };
+
+    let mut content = Vec::new();
+    if let Err(e) = std::io::stdin().read_to_end(&mut content) {
+        emit_error(&format!("could not read file body from stdin: {e}"));
+        return ExitCode::from(2);
+    }
+
+    // Reach (and immutable-policy) decided by the same pure kernel as everywhere,
+    // under the charter in force. A denial means the write never touches the tree.
+    let action = Action::WriteFile {
+        path: path.clone(),
+        bytes: content.len(),
+    };
+    if let Verdict::Deny(violations) = policy::Policy::for_charter(charter).evaluate(&action) {
+        let pairs: Vec<(&'static str, String)> = violations
+            .into_iter()
+            .map(|v| (v.invariant, v.reason))
+            .collect();
+        emit_rejected(&pairs);
+        return ExitCode::SUCCESS;
+    }
+
+    emit_disposition(&path, &worktree::stage(&repo, &path, &content));
+    ExitCode::SUCCESS
+}
+
+/// Close the changeset: verify with the outcome's own build, commit all on green
+/// or revert all on red.
+fn cmd_commit(args: &[String]) -> ExitCode {
+    let mut flags = Flags::default();
+    if let Err(code) = flags.parse(args) {
+        return code;
+    }
+    let (Some(repo_raw), Some(intent)) = (flags.repo, flags.intent) else {
+        emit_error("usage: envelope commit --repo <dir> --intent <text>");
+        return ExitCode::from(2);
+    };
+    let repo = match worktree::resolve_repo(&repo_raw) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("repo `{repo_raw}` not found: {e}"));
+            return ExitCode::from(2);
+        }
+    };
+    emit_disposition(
+        "",
+        &worktree::commit(&repo, &intent, &BuildVerifier::repo_build()),
+    );
+    ExitCode::SUCCESS
+}
+
+/// Establish a fresh workspace baseline from the agent's chosen starting-point.
+fn cmd_establish(args: &[String]) -> ExitCode {
+    let mut flags = Flags::default();
+    if let Err(code) = flags.parse(args) {
+        return code;
+    }
+    let Some(repo_raw) = flags.repo else {
+        emit_error("usage: envelope establish --repo <workspace> --mode <empty|clone> [--source <dir>]");
+        return ExitCode::from(2);
+    };
+    let workspace = worktree::resolve_new_repo(&repo_raw);
+
+    let mode = match flags.mode.as_deref() {
+        Some("empty") | None => Establish::Empty,
+        Some("clone") => {
+            let Some(source_raw) = flags.source else {
+                emit_error("clone mode needs --source <dir>");
+                return ExitCode::from(2);
+            };
+            match worktree::resolve_repo(&source_raw) {
+                Ok(source) => Establish::Clone { source },
+                Err(e) => {
+                    emit_error(&format!("source `{source_raw}` not found: {e}"));
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        Some(other) => {
+            emit_error(&format!("unknown mode `{other}` (empty|clone)"));
+            return ExitCode::from(2);
+        }
+    };
+
+    emit_disposition(
+        "",
+        &worktree::establish(&workspace, mode, &BuildVerifier::repo_build()),
+    );
+    ExitCode::SUCCESS
+}
+
+/// Abandon an open changeset: reset the work tree to the clean baseline.
+fn cmd_reset(args: &[String]) -> ExitCode {
+    let mut flags = Flags::default();
+    if let Err(code) = flags.parse(args) {
+        return code;
+    }
+    let Some(repo_raw) = flags.repo else {
+        emit_error("usage: envelope reset --repo <dir>");
+        return ExitCode::from(2);
+    };
+    let repo = match worktree::resolve_repo(&repo_raw) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("repo `{repo_raw}` not found: {e}"));
+            return ExitCode::from(2);
+        }
+    };
+    worktree::reset(&repo);
+    println!("{{\"outcome\":\"reset\"}}");
+    ExitCode::SUCCESS
+}
+
+/// Flags shared by the changeset commands. Each command validates which it needs.
+#[derive(Default)]
+struct Flags {
+    repo: Option<String>,
+    path: Option<String>,
+    intent: Option<String>,
+    charter: Option<String>,
+    mode: Option<String>,
+    source: Option<String>,
+}
+
+impl Flags {
+    fn parse(&mut self, args: &[String]) -> Result<(), ExitCode> {
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--repo" => self.repo = args.get(i + 1).cloned(),
+                "--path" => self.path = args.get(i + 1).cloned(),
+                "--intent" => self.intent = args.get(i + 1).cloned(),
+                "--charter" => self.charter = args.get(i + 1).cloned(),
+                "--mode" => self.mode = args.get(i + 1).cloned(),
+                "--source" => self.source = args.get(i + 1).cloned(),
+                other => {
+                    emit_error(&format!("unknown flag `{other}`"));
+                    return Err(ExitCode::from(2));
+                }
+            }
+            i += 2;
+        }
+        Ok(())
+    }
 }
 
 // ---- machine-readable result on stdout (one JSON object per adjudication) ----
 
 fn emit_disposition(path: &str, d: &Disposition) {
     match d {
+        Disposition::Established { detail } => println!(
+            "{{\"outcome\":\"established\",\"detail\":{}}}",
+            json_str(detail)
+        ),
+        Disposition::Begun => println!("{{\"outcome\":\"begun\"}}"),
+        Disposition::Staged { path } => {
+            println!("{{\"outcome\":\"staged\",\"path\":{}}}", json_str(path))
+        }
+        Disposition::BuildFailed { detail } => println!(
+            "{{\"outcome\":\"build_failed\",\"path\":{},\"reason\":\"verification failed\",\"detail\":{}}}",
+            json_str(path),
+            json_str(detail)
+        ),
         Disposition::Committed { commit } => println!(
             "{{\"outcome\":\"committed\",\"path\":{},\"commit\":{}}}",
             json_str(path),

@@ -9,30 +9,34 @@
 //! `change_shape`) and health (`telemetry` + `guardrails`) — are applied by the
 //! harness, not here, because they cannot be decided from the action alone.
 
-use crate::invariants::{self, Invariant};
+use crate::invariants::reach::Charter;
 use crate::types::{Action, Verdict, Violation};
 
 pub struct Policy {
-    invariants: Vec<Invariant>,
+    charter: Charter,
 }
 
 impl Policy {
-    /// Construct the canonical reference monitor. To audit the action-only rules,
-    /// read this function plus the invariant modules it names; the verification
-    /// and outcome gates live in the harness.
-    pub fn reference_monitor() -> Self {
-        Policy {
-            invariants: vec![immutable_policy, invariants::reach::check],
-        }
+    /// Construct the policy for a given reach charter. To audit the action-only
+    /// rules, read this struct plus the invariant modules it names; the
+    /// verification and outcome gates live in the harness.
+    pub fn for_charter(charter: Charter) -> Self {
+        Policy { charter }
     }
 
-    /// Evaluate every invariant and aggregate their findings. Deny if any rule
-    /// is violated; otherwise allow.
+    /// The canonical reference monitor for an app under maintenance — the narrow,
+    /// fitted charter that the structural-trust thesis is about. Genesis-stage
+    /// adjudication is constructed explicitly with [`Policy::for_charter`].
+    pub fn reference_monitor() -> Self {
+        Policy::for_charter(Charter::Maintenance)
+    }
+
+    /// Evaluate every action-only invariant and aggregate their findings. Deny if
+    /// any rule is violated; otherwise allow. The rules are the immutable-policy
+    /// guarantee and the reach charter currently in force.
     pub fn evaluate(&self, action: &Action) -> Verdict {
-        let mut violations: Vec<Violation> = vec![];
-        for invariant in &self.invariants {
-            violations.extend(invariant(action));
-        }
+        let mut violations: Vec<Violation> = immutable_policy(action);
+        violations.extend(self.charter.check(action));
         if violations.is_empty() {
             Verdict::Allow
         } else {
