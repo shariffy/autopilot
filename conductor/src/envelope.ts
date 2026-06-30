@@ -1,45 +1,35 @@
 // The single seam between the untrusted brain and the trusted core.
 //
-// Every write the brain wants to make crosses this boundary: it shells out to the
-// `envelope` binary, which decides (reach), enacts, verifies with the repo's own
-// build, and commits or reverts. This module cannot widen what the envelope
-// allows — it can only ask, and report back the verdict the envelope returned.
+// Every effect the brain wants — establishing a workspace, staging a write,
+// verifying-and-committing a changeset — crosses this boundary by shelling out to
+// the `envelope` binary. This module cannot widen what the envelope allows; it can
+// only ask, and report back the verdict the envelope returned. Reach is decided by
+// the envelope under the charter the caller names; verification is the outcome's
+// own build, run inside the envelope. The brain supplies none of what it is judged
+// by.
 
 import { spawn } from 'node:child_process'
 
-/** The verdict the trusted core returns for one proposed write. */
+/** The verdict the trusted core returns for one request. */
 export type Verdict =
+  | { outcome: 'established'; detail: string }
+  | { outcome: 'begun' }
+  | { outcome: 'staged'; path: string }
   | { outcome: 'committed'; path: string; commit: string }
+  | { outcome: 'build_failed'; path: string; reason: string; detail: string }
   | { outcome: 'rolled_back'; path: string; reason: string; detail: string }
   | { outcome: 'rejected'; violations: { invariant: string; reason: string }[] }
   | { outcome: 'refused'; path?: string; reason: string }
+  | { outcome: 'reset' }
   | { outcome: 'error'; reason: string }
 
-export interface AdjudicateOptions {
-  /** Path to the compiled `envelope` binary. */
-  bin: string
-  /** Absolute path to the governed repository (roli-admin). */
-  repo: string
-  /** Repository-relative path the brain wants to write. */
-  path: string
-  /** One-line rationale; becomes the commit message on success. */
-  intent: string
-  /** The full proposed file body. */
-  content: string
-}
+/** The reach charter, chosen by lifecycle stage — never by the brain. */
+export type Charter = 'genesis' | 'maintenance'
 
-/**
- * Submit one proposed write to the trusted core and resolve with its verdict.
- * The file body goes over stdin so arbitrary source needs no escaping; the
- * verdict comes back as a single JSON line on stdout.
- */
-export function adjudicateWrite(opts: AdjudicateOptions): Promise<Verdict> {
+/** Run the envelope binary with args and optional stdin; resolve its verdict. */
+function runEnvelope(bin: string, args: string[], stdin?: string): Promise<Verdict> {
   return new Promise((resolve) => {
-    const child = spawn(
-      opts.bin,
-      ['adjudicate', '--repo', opts.repo, '--path', opts.path, '--intent', opts.intent],
-      { stdio: ['pipe', 'pipe', 'inherit'] },
-    )
+    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'inherit'] })
 
     let stdout = ''
     child.stdout.setEncoding('utf8')
@@ -64,22 +54,73 @@ export function adjudicateWrite(opts: AdjudicateOptions): Promise<Verdict> {
       }
     })
 
-    child.stdin.write(opts.content)
+    if (stdin !== undefined) child.stdin.write(stdin)
     child.stdin.end()
   })
+}
+
+/** Establish a workspace baseline from a starting-point (trusted setup). */
+export function establishWorkspace(opts: {
+  bin: string
+  workspace: string
+  mode: 'empty' | 'clone'
+  source?: string
+}): Promise<Verdict> {
+  const args = ['establish', '--repo', opts.workspace, '--mode', opts.mode]
+  if (opts.mode === 'clone' && opts.source) args.push('--source', opts.source)
+  return runEnvelope(opts.bin, args)
+}
+
+/** Stage one proposed write into the open changeset, under the named charter. */
+export function stageWrite(opts: {
+  bin: string
+  repo: string
+  path: string
+  charter: Charter
+  content: string
+}): Promise<Verdict> {
+  return runEnvelope(
+    opts.bin,
+    ['stage', '--repo', opts.repo, '--path', opts.path, '--charter', opts.charter],
+    opts.content,
+  )
+}
+
+/** Close the changeset: verify with the outcome's build, commit-all or report. */
+export function commitChangeset(opts: {
+  bin: string
+  repo: string
+  intent: string
+}): Promise<Verdict> {
+  return runEnvelope(opts.bin, ['commit', '--repo', opts.repo, '--intent', opts.intent])
+}
+
+/** Abandon an open changeset: reset the tree to the clean baseline. */
+export function resetChangeset(opts: { bin: string; repo: string }): Promise<Verdict> {
+  return runEnvelope(opts.bin, ['reset', '--repo', opts.repo])
 }
 
 /** A short, human-readable line describing a verdict — for logs and tool results. */
 export function describeVerdict(v: Verdict): string {
   switch (v.outcome) {
+    case 'established':
+      return `ESTABLISHED — ${v.detail}`
+    case 'begun':
+      return 'BEGUN'
+    case 'staged':
+      return `STAGED ${v.path}`
     case 'committed':
-      return `COMMITTED ${v.path} @ ${v.commit}`
+      return `COMMITTED ${v.path || '(changeset)'} @ ${v.commit}`
+    case 'build_failed':
+      return `BUILD_FAILED — staged tree kept; fix and re-commit`
     case 'rolled_back':
       return `ROLLED_BACK ${v.path} — ${v.reason}`
     case 'rejected':
       return `REJECTED — ${v.violations.map((x) => `[${x.invariant}] ${x.reason}`).join('; ')}`
     case 'refused':
       return `REFUSED — ${v.reason}`
+    case 'reset':
+      return 'RESET'
     case 'error':
       return `ERROR — ${v.reason}`
   }
