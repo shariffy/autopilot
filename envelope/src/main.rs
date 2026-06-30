@@ -249,22 +249,15 @@ fn cmd_stage(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let repo = match worktree::resolve_repo(&repo_raw) {
-        Ok(p) => p,
-        Err(e) => {
-            emit_error(&format!("repo `{repo_raw}` not found: {e}"));
-            return ExitCode::from(2);
-        }
-    };
-
     let mut content = Vec::new();
     if let Err(e) = std::io::stdin().read_to_end(&mut content) {
         emit_error(&format!("could not read file body from stdin: {e}"));
         return ExitCode::from(2);
     }
 
-    // Reach (and immutable-policy) decided by the same pure kernel as everywhere,
-    // under the charter in force. A denial means the write never touches the tree.
+    // Reach (and immutable-policy) is a PURE decision — it does not depend on the
+    // repo existing, so it is made before resolving the path. A denial means the
+    // write never touches the tree (and the seam can be probed without a workspace).
     let action = Action::WriteFile {
         path: path.clone(),
         bytes: content.len(),
@@ -278,6 +271,13 @@ fn cmd_stage(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    let repo = match worktree::resolve_repo(&repo_raw) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("repo `{repo_raw}` not found: {e}"));
+            return ExitCode::from(2);
+        }
+    };
     emit_disposition(&path, &worktree::stage(&repo, &path, &content));
     ExitCode::SUCCESS
 }
