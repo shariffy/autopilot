@@ -5,8 +5,18 @@
 //                 There is an existing admin tool at admin.roli.com."
 //   npm start -- --dry-run        # probe the envelope seam without calling Claude
 //
+// The primary input is the observation ledger — a directory of numbered, immutable
+// records (observations/NNNN-*.md), mirroring docs/adr/. A brief passed on the
+// command line is filed as one more human observation so it is not lost, never the
+// input itself. See docs/adr/0006.
+//
+//   npm start                     # act on the observation ledger as it stands
+//   npm start -- "…a new need…"   # file that as a human observation, then act
+//   npm start -- --dry-run        # probe the envelope seam without calling Claude
+//
 // Config via env (all optional):
 //   WORKSPACE        the outcome to build/maintain     (default: ../roli-admin-genesis)
+//   OBSERVATIONS     the observation ledger directory   (default: ./observations)
 //   OBSERVE_SOURCES  read-only sources to observe, as   (default: admin-roli=../../admin.roli.com)
 //                    comma-separated name=path pairs; may be empty for a pure greenfield run
 //   CHARTER          reach charter: genesis|maintenance (default: genesis)
@@ -19,6 +29,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runLoop } from './loop.js'
 import { stageWrite, describeVerdict, type Charter } from './envelope.js'
+import { readObservations, appendObservation, renderObservations } from './observations.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 // conductor/src -> conductor -> the system repo root (which holds envelope/ and conductor/)
@@ -74,6 +85,7 @@ async function main() {
     charter,
     auditPath: envPath('CONDUCTOR_AUDIT', path.join(here, '..', 'conductor-audit.jsonl')),
   }
+  const observationsDir = envPath('OBSERVATIONS', path.join(here, '..', 'observations'))
   const maxTurns = Number(process.env.MAX_TURNS ?? 60)
 
   // Preflight: the seam must exist before we let the brain near it.
@@ -85,6 +97,7 @@ async function main() {
 
   const sourceNames = Object.keys(ctx.sources)
   console.error(`workspace  ${ctx.repo}`)
+  console.error(`ledger     ${observationsDir}`)
   console.error(`sources    ${sourceNames.length ? sourceNames.map((n) => `${n} -> ${ctx.sources[n]}`).join(', ') : '(none)'}`)
   console.error(`charter    ${ctx.charter}`)
   console.error(`envelope   ${ctx.envelopeBin}`)
@@ -108,10 +121,19 @@ async function main() {
     process.exit(ok ? 0 : 1)
   }
 
-  if (!task) {
-    console.error('\nno task given. usage: npm start -- "your observations"   (or --dry-run)')
+  // A brief on the command line is not the input — it is filed into the ledger as
+  // one more human observation, so the ledger stays the single, durable ask.
+  if (task) {
+    const id = await appendObservation(observationsDir, { source: 'human', body: task })
+    console.error(`\nfiled CLI brief as observation ${id} (source: human)`)
+  }
+  const observations = await readObservations(observationsDir)
+  if (observations.length === 0) {
+    console.error(`\nno observations to act on. add records to ${observationsDir}`)
+    console.error('or pass one:  npm start -- "…a need…"')
     process.exit(2)
   }
+
   for (const [name, root] of Object.entries(ctx.sources)) {
     if (!(await exists(root))) {
       console.error(`\nobservation source "${name}" not found at ${root}`)
@@ -124,8 +146,9 @@ async function main() {
     process.exit(1)
   }
 
-  console.error(`\ntask: ${task}\n`)
-  const result = await runLoop({ task, ctx, maxTurns })
+  const brief = renderObservations(observations)
+  console.error(`\nacting on ${observations.length} observation(s) from the log\n`)
+  const result = await runLoop({ task: brief, ctx, maxTurns })
 
   console.error('\n══════════════════════════════════════════════════════════')
   console.error(`stopped: ${result.stoppedBecause} after ${result.turns} turn(s)`)

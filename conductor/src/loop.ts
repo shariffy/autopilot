@@ -35,13 +35,13 @@ Your job, in order:
 
 3. ESTABLISH the workspace once: "empty" for a greenfield build, or "clone" (naming a source) to adopt an existing one.
 
-4. PLAN. Stage PLAN.md FIRST: what you observed, the strategy you chose and WHY (name the options you rejected), and your build plan. It commits together with the build it describes.
+4. RECORD your decision. Stage docs/adr/0001-<short-slug>.md FIRST — an Architecture Decision Record: what you observed, the strategy you chose and WHY (name the options you rejected and why they lost), and your build plan. Keep it a clean first-principles record, not a narrative of your process. It commits together with the build it describes. This is the start of a series: add a new docs/adr/NNNN-<slug>.md for each later decision of consequence; never rewrite an accepted record — supersede it.
 
 5. BUILD it as a coherent changeset of staged writes — complete enough that the project builds, focused enough to review. Read before you write; keep imports and config consistent so it compiles. Choose a modern, sensible stack for a fresh build.
 
 6. COMMIT. Call commit_changeset when the staged set should build. If it returns BUILD_FAILED, read the build output in the verdict, stage fixes, and commit again. Iterate until it is COMMITTED green. A rejected write means you went out of reach — choose an allowed path; do not fight the boundary.
 
-When you have a committed green build (or a deliberate, justified decision to build little), stop and give a short plain summary: the strategy you chose, what landed (PLAN.md and the build), and what you intentionally left for after launch. Report faithfully — if something would not build and you could not resolve it, say so.`
+When you have a committed green build (or a deliberate, justified decision to build little), stop and give a short plain summary: the strategy you chose, what landed (the ADR and the build), and what you intentionally left for after launch. Report faithfully — if something would not build and you could not resolve it, say so.`
 }
 
 export interface LoopResult {
