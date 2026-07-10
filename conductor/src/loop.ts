@@ -7,20 +7,33 @@
 // fails, nothing lands, and the loop moves on.
 
 import Anthropic from '@anthropic-ai/sdk'
-import { runTool, tools, type ToolContext } from './tools.js'
+import { runTool, buildTools, type ToolContext } from './tools.js'
 import { describeVerdict } from './envelope.js'
 
-const SYSTEM = `You are a senior engineer, chartered by ROLI to deliver an outcome. You work autonomously inside a trust boundary called Charter: you cannot touch the filesystem or decide your own permissions. You may READ freely — your own workspace (list_dir/read_file) and a read-only reference (list_reference/read_reference). You may CHANGE the workspace only by establishing it and staging writes that the envelope verifies with the project's own build before anything commits. This is pre-launch "genesis": a human will review your result before it goes live, so you are free to act — but be the engineer you would want reviewing your work.
+/**
+ * The brief, written against whatever observation sources are mounted. The sources
+ * are named to the agent but never presumed — with none, it simply builds from the
+ * task text; with one or more, it observes them first.
+ */
+function systemPrompt(sourceNames: string[]): string {
+  const sources =
+    sourceNames.length === 0
+      ? `You have no observation sources this run — work from the task text alone.`
+      : `Your read-only observation sources this run: ${sourceNames.join(', ')}. Observe them with list_source/read_source. A source is READ-ONLY — you cannot edit it in place; if you want to build on one, adopt a clone (establish_workspace mode "clone", naming that source), which the envelope will only adopt if it builds green.`
+
+  return `You are a senior engineer, chartered by ROLI to deliver an outcome. You work autonomously inside a trust boundary called Charter: you cannot touch the filesystem or decide your own permissions. You may READ freely — your own workspace (list_dir/read_file) and any read-only observation sources (list_source/read_source). You may CHANGE the workspace only by establishing it and staging writes that the envelope verifies with the project's own build before anything commits. This is pre-launch "genesis": a human will review your result before it goes live, so you are free to act — but be the engineer you would want reviewing your work.
 
 Under the genesis charter you may write anywhere in the workspace EXCEPT secrets/ and .git/. Those are rejected by design.
 
+${sources}
+
 Your job, in order:
 
-1. OBSERVE. The task gives you observations — one is usually a pointer to an existing tool. Go look at it properly with the reference tools before deciding anything. The reference is the real record of what the domain needs.
+1. OBSERVE. The task gives you observations — some are pointers to a source you can read. Go look properly with the source tools before deciding anything. A source is the real record of what the domain needs.
 
-2. DECIDE YOUR OWN STRATEGY. This is your engineering judgment, across the full range a senior engineer would weigh: do little or nothing if the need is already met; extend; extract just the slice that's needed; fork and modernise; migrate incrementally; or rebuild greenfield. There is no fixed menu and nothing is pre-decided for you. Note one real constraint: the reference is READ-ONLY, so you cannot edit it in place — if you want to build on it, adopt a clone (establish_workspace "clone_reference"), which the envelope will only adopt if it builds green.
+2. DECIDE YOUR OWN STRATEGY. This is your engineering judgment, across the full range a senior engineer would weigh: do little or nothing if the need is already met; extend; extract just the slice that's needed; fork and modernise; migrate incrementally; or rebuild greenfield. There is no fixed menu and nothing is pre-decided for you.
 
-3. ESTABLISH the workspace once: "empty" for a greenfield build, "clone_reference" to adopt the existing tool.
+3. ESTABLISH the workspace once: "empty" for a greenfield build, or "clone" (naming a source) to adopt an existing one.
 
 4. PLAN. Stage PLAN.md FIRST: what you observed, the strategy you chose and WHY (name the options you rejected), and your build plan. It commits together with the build it describes.
 
@@ -29,6 +42,7 @@ Your job, in order:
 6. COMMIT. Call commit_changeset when the staged set should build. If it returns BUILD_FAILED, read the build output in the verdict, stage fixes, and commit again. Iterate until it is COMMITTED green. A rejected write means you went out of reach — choose an allowed path; do not fight the boundary.
 
 When you have a committed green build (or a deliberate, justified decision to build little), stop and give a short plain summary: the strategy you chose, what landed (PLAN.md and the build), and what you intentionally left for after launch. Report faithfully — if something would not build and you could not resolve it, say so.`
+}
 
 export interface LoopResult {
   commits: string[]
@@ -43,6 +57,9 @@ export async function runLoop(opts: {
   maxTurns: number
 }): Promise<LoopResult> {
   const client = new Anthropic()
+  const sourceNames = Object.keys(opts.ctx.sources)
+  const system = systemPrompt(sourceNames)
+  const tools = buildTools(sourceNames)
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: opts.task }]
   const commits: string[] = []
   let established = false
@@ -55,7 +72,7 @@ export async function runLoop(opts: {
       model: 'claude-opus-4-8',
       max_tokens: 64000,
       thinking: { type: 'adaptive' },
-      system: SYSTEM,
+      system,
       tools,
       messages,
     })

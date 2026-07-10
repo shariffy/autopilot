@@ -6,12 +6,13 @@
 //   npm start -- --dry-run        # probe the envelope seam without calling Claude
 //
 // Config via env (all optional):
-//   WORKSPACE        the outcome to build/maintain   (default: ../roli-admin-genesis)
-//   REFERENCE_REPO   read-only predecessor to observe (default: ../../admin.roli.com)
+//   WORKSPACE        the outcome to build/maintain     (default: ../roli-admin-genesis)
+//   OBSERVE_SOURCES  read-only sources to observe, as   (default: admin-roli=../../admin.roli.com)
+//                    comma-separated name=path pairs; may be empty for a pure greenfield run
 //   CHARTER          reach charter: genesis|maintenance (default: genesis)
-//   ENVELOPE_BIN     the compiled trusted core        (default: envelope/target/debug/envelope)
-//   CONDUCTOR_AUDIT  change journal (JSONL)           (default: ./conductor-audit.jsonl)
-//   MAX_TURNS        loop iteration cap               (default: 60)
+//   ENVELOPE_BIN     the compiled trusted core          (default: envelope/target/debug/envelope)
+//   CONDUCTOR_AUDIT  change journal (JSONL)             (default: ./conductor-audit.jsonl)
+//   MAX_TURNS        loop iteration cap                 (default: 60)
 
 import { access, constants } from 'node:fs/promises'
 import path from 'node:path'
@@ -26,6 +27,24 @@ const systemRoot = path.resolve(here, '..', '..')
 function envPath(name: string, fallback: string): string {
   const v = process.env[name]
   return v ? path.resolve(v) : fallback
+}
+
+/**
+ * Parse the observation sources: `name=path,name=path`. Which sources exist — and
+ * that one happens to be a git repo worth cloning — is configuration, not baked in.
+ * An empty setting means no sources (a pure greenfield run).
+ */
+function parseSources(spec: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const pair of spec.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const eq = pair.indexOf('=')
+    if (eq < 0) throw new Error(`bad OBSERVE_SOURCES entry "${pair}" (want name=path)`)
+    const name = pair.slice(0, eq).trim()
+    const p = pair.slice(eq + 1).trim()
+    if (!name || !p) throw new Error(`bad OBSERVE_SOURCES entry "${pair}" (want name=path)`)
+    out[name] = path.resolve(p)
+  }
+  return out
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -43,12 +62,14 @@ async function main() {
   const task = argv.filter((a) => !a.startsWith('--')).join(' ').trim()
 
   const charter = (process.env.CHARTER ?? 'genesis') as Charter
+  const defaultSources = `admin-roli=${path.resolve(systemRoot, '..', '..', 'admin.roli.com')}`
   const ctx = {
     // The outcome the agent will establish and build — a fresh sibling, not the
     // existing roli-admin, so the genesis is genuine.
     repo: envPath('WORKSPACE', path.resolve(systemRoot, '..', 'roli-admin-genesis')),
-    // The read-only predecessor named in the second observation.
-    referenceRepo: envPath('REFERENCE_REPO', path.resolve(systemRoot, '..', '..', 'admin.roli.com')),
+    // Named read-only observation sources. One is the predecessor from the second
+    // observation; there could be zero, or several, and none is privileged.
+    sources: parseSources(process.env.OBSERVE_SOURCES ?? defaultSources),
     envelopeBin: envPath('ENVELOPE_BIN', path.join(systemRoot, 'envelope', 'target', 'debug', 'envelope')),
     charter,
     auditPath: envPath('CONDUCTOR_AUDIT', path.join(here, '..', 'conductor-audit.jsonl')),
@@ -62,8 +83,9 @@ async function main() {
     process.exit(1)
   }
 
+  const sourceNames = Object.keys(ctx.sources)
   console.error(`workspace  ${ctx.repo}`)
-  console.error(`reference  ${ctx.referenceRepo}`)
+  console.error(`sources    ${sourceNames.length ? sourceNames.map((n) => `${n} -> ${ctx.sources[n]}`).join(', ') : '(none)'}`)
   console.error(`charter    ${ctx.charter}`)
   console.error(`envelope   ${ctx.envelopeBin}`)
   console.error(`audit      ${ctx.auditPath}`)
@@ -90,10 +112,12 @@ async function main() {
     console.error('\nno task given. usage: npm start -- "your observations"   (or --dry-run)')
     process.exit(2)
   }
-  if (!(await exists(ctx.referenceRepo))) {
-    console.error(`\nreference repo not found at ${ctx.referenceRepo}`)
-    console.error('set REFERENCE_REPO to the predecessor the agent should observe')
-    process.exit(1)
+  for (const [name, root] of Object.entries(ctx.sources)) {
+    if (!(await exists(root))) {
+      console.error(`\nobservation source "${name}" not found at ${root}`)
+      console.error('fix OBSERVE_SOURCES (name=path,...) or unset it for a greenfield run')
+      process.exit(1)
+    }
   }
   if (!process.env.ANTHROPIC_API_KEY) {
     console.error('\nANTHROPIC_API_KEY is not set.')
