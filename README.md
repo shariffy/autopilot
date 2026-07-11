@@ -61,6 +61,7 @@ repo); point it elsewhere with `ROLI_ADMIN_REPO`. See [conductor/README](conduct
 - [envelope/README](envelope/README.md) — the trusted core, the invariants, how the boundary holds
 - [docs/adr/](docs/adr) — architecture decisions (core name, language for the core, one-system-repo, naming the system)
 - [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) — assets, trust boundary, threats, and honest residuals
+- [docs/ROADMAP.md](docs/ROADMAP.md) — the ordered backlog: the residuals and ADR follow-ons, sequenced
 
 ## Status
 
