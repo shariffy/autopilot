@@ -141,17 +141,16 @@ async function main() {
       process.exit(1)
     }
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error('\nANTHROPIC_API_KEY is not set.')
-    process.exit(1)
-  }
-
+  // Auth is handled by the Agent SDK: your Claude Code login (~/.claude) — i.e.
+  // your subscription — or ANTHROPIC_API_KEY if that is set instead. No hard check
+  // here; if no credential resolves, the SDK reports it when the run starts.
   const brief = renderObservations(observations)
   console.error(`\nacting on ${observations.length} observation(s) from the log\n`)
   const result = await runLoop({ task: brief, ctx, maxTurns })
 
   console.error('\n══════════════════════════════════════════════════════════')
   console.error(`stopped: ${result.stoppedBecause} after ${result.turns} turn(s)`)
+  if (result.costUsd !== undefined) console.error(`cost: $${result.costUsd.toFixed(4)}`)
   console.error(`workspace established: ${result.established ? 'yes' : 'no'}`)
   if (result.commits.length) {
     console.error(`landed ${result.commits.length} changeset commit(s):`)

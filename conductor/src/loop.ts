@@ -1,14 +1,15 @@
 // The agentic loop: Claude proposes, the envelope disposes.
 //
-// A manual tool-use loop (not the tool runner) because the interesting work
-// happens at the gate — each staged write and each commit returns a real verdict
-// we log and feed back. The model is untrusted; nothing here depends on it
+// The brain runs under the Claude Agent SDK (Claude Code as a library), which
+// authenticates via your Claude Code login (~/.claude) — your subscription — or
+// ANTHROPIC_API_KEY if that is set instead. We give it ONLY the envelope-backed
+// MCP tools (`tools: []` strips every built-in Read/Write/Bash), so nothing the
+// brain does escapes the seam. The model is untrusted; nothing here depends on it
 // behaving. Worst case it proposes garbage, the envelope rejects it or the build
 // fails, nothing lands, and the loop moves on.
 
-import Anthropic from '@anthropic-ai/sdk'
-import { runTool, buildTools, type ToolContext } from './tools.js'
-import { describeVerdict } from './envelope.js'
+import { query } from '@anthropic-ai/claude-agent-sdk'
+import { buildToolServer, SERVER_NAME, type ToolContext, type LoopState } from './tools.js'
 
 /**
  * The brief, written against whatever observation sources are mounted. The sources
@@ -21,7 +22,7 @@ function systemPrompt(sourceNames: string[]): string {
       ? `You have no observation sources this run — work from the task text alone.`
       : `Your read-only observation sources this run: ${sourceNames.join(', ')}. Observe them with list_source/read_source. A source is READ-ONLY — you cannot edit it in place; if you want to build on one, adopt a clone (establish_workspace mode "clone", naming that source), which the envelope will only adopt if it builds green.`
 
-  return `You are a senior engineer, chartered by ROLI to deliver an outcome. You work autonomously inside a trust boundary called Charter: you cannot touch the filesystem or decide your own permissions. You may READ freely — your own workspace (list_dir/read_file) and any read-only observation sources (list_source/read_source). You may CHANGE the workspace only by establishing it and staging writes that the envelope verifies with the project's own build before anything commits. This is pre-launch "genesis": a human will review your result before it goes live, so you are free to act — but be the engineer you would want reviewing your work.
+  return `You are a senior engineer, chartered by ROLI to deliver an outcome. You work autonomously inside a trust boundary called Charter: you cannot touch the filesystem or decide your own permissions, and you have no shell — your only tools are the ones provided. You may READ freely — your own workspace (list_dir/read_file) and any read-only observation sources (list_source/read_source). You may CHANGE the workspace only by establishing it and staging writes that the envelope verifies with the project's own build before anything commits. This is pre-launch "genesis": a human will review your result before it goes live, so you are free to act — but be the engineer you would want reviewing your work.
 
 Under the genesis charter you may write anywhere in the workspace EXCEPT secrets/ and .git/. Those are rejected by design.
 
@@ -49,6 +50,7 @@ export interface LoopResult {
   established: boolean
   turns: number
   stoppedBecause: string
+  costUsd?: number
 }
 
 export async function runLoop(opts: {
@@ -56,57 +58,43 @@ export async function runLoop(opts: {
   ctx: ToolContext
   maxTurns: number
 }): Promise<LoopResult> {
-  const client = new Anthropic()
   const sourceNames = Object.keys(opts.ctx.sources)
   const system = systemPrompt(sourceNames)
-  const tools = buildTools(sourceNames)
-  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: opts.task }]
-  const commits: string[] = []
-  let established = false
+  const state: LoopState = { commits: [], established: false }
+  const { server } = buildToolServer(opts.ctx, state)
 
-  let turn = 0
-  for (; turn < opts.maxTurns; turn++) {
-    process.stdout.write(`\n\n── turn ${turn + 1} ─────────────────────────────────────────\n`)
+  let turns = 0
+  let stoppedBecause = 'end'
+  let costUsd: number | undefined
 
-    const stream = client.messages.stream({
+  for await (const message of query({
+    prompt: opts.task,
+    options: {
+      systemPrompt: system,
       model: 'claude-opus-4-8',
-      max_tokens: 64000,
-      thinking: { type: 'adaptive' },
-      system,
-      tools,
-      messages,
-    })
-    stream.on('text', (delta) => process.stdout.write(delta))
-    const message = await stream.finalMessage()
-    messages.push({ role: 'assistant', content: message.content })
-
-    if (message.stop_reason !== 'tool_use') {
-      return { commits, established, turns: turn + 1, stoppedBecause: message.stop_reason ?? 'end_turn' }
-    }
-
-    const toolUses = message.content.filter(
-      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
-    )
-    const results: Anthropic.ToolResultBlockParam[] = []
-    for (const tu of toolUses) {
-      const { result, verdict } = await runTool(opts.ctx, tu.name, tu.input)
-      if (verdict) {
-        process.stdout.write(`\n  ↳ ${describeVerdict(verdict)}\n`)
-        if (verdict.outcome === 'committed') commits.push(verdict.commit)
-        if (verdict.outcome === 'established') established = true
-      } else {
-        process.stdout.write(`\n  · ${tu.name}(${preview(tu.input)})\n`)
+      mcpServers: { [SERVER_NAME]: server },
+      // Pre-approve our tools; strip every built-in so the brain has no path to
+      // the filesystem except through the envelope-backed MCP tools.
+      allowedTools: [`mcp__${SERVER_NAME}__*`],
+      tools: [],
+      permissionMode: 'bypassPermissions',
+      // Don't load the user's global CLAUDE.md / settings — the charter is the
+      // only instruction set the agent runs under.
+      settingSources: [],
+      maxTurns: opts.maxTurns,
+    },
+  })) {
+    if (message.type === 'assistant') {
+      turns++
+      for (const block of message.message.content) {
+        if (block.type === 'text') process.stdout.write(block.text)
+        else if (block.type === 'tool_use') process.stdout.write(`\n  · ${block.name}\n`)
       }
-      results.push({ type: 'tool_result', tool_use_id: tu.id, content: result })
+    } else if (message.type === 'result') {
+      stoppedBecause = message.subtype ?? 'result'
+      costUsd = message.total_cost_usd
     }
-    messages.push({ role: 'user', content: results })
   }
 
-  return { commits, established, turns: turn, stoppedBecause: 'max_turns' }
-}
-
-/** A short preview of a read tool's input, for the live log. */
-function preview(input: unknown): string {
-  const s = JSON.stringify(input)
-  return s.length > 80 ? s.slice(0, 77) + '…' : s
+  return { commits: state.commits, established: state.established, turns, stoppedBecause, costUsd }
 }
