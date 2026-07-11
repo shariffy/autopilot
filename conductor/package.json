@@ -6,6 +6,7 @@
   "description": "The untrusted brain: a Claude-driven loop that maintains roli-admin, governed by the envelope trust boundary.",
   "scripts": {
     "start": "tsx src/main.ts",
+    "observe": "tsx src/observe.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

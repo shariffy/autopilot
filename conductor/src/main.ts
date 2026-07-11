@@ -1,18 +1,15 @@
 // Entry point for the conductor — the untrusted brain that builds and maintains an
 // outcome under the envelope.
 //
-//   npm start -- "ROLI needs an admin tool for managing users and products. \
-//                 There is an existing admin tool at admin.roli.com."
-//   npm start -- --dry-run        # probe the envelope seam without calling Claude
+// The only input is the observation ledger — a directory of numbered, immutable
+// records (observations/NNNN-*.md), mirroring docs/adr/. Running READS the ledger
+// and acts on it; it never writes to it. Filing an observation is its own act (a
+// reviewable ledger write) — use `npm run observe`, or drop a record directly. See
+// docs/adr/0006.
 //
-// The primary input is the observation ledger — a directory of numbered, immutable
-// records (observations/NNNN-*.md), mirroring docs/adr/. A brief passed on the
-// command line is filed as one more human observation so it is not lost, never the
-// input itself. See docs/adr/0006.
-//
-//   npm start                     # act on the observation ledger as it stands
-//   npm start -- "…a new need…"   # file that as a human observation, then act
-//   npm start -- --dry-run        # probe the envelope seam without calling Claude
+//   npm start                        # act on the observation ledger as it stands
+//   npm start -- --dry-run           # probe the envelope seam without calling Claude
+//   npm run observe -- "…a need…"    # file a new observation (does NOT run the agent)
 //
 // Config via env (all optional):
 //   WORKSPACE        the outcome to build/maintain     (default: ../roli-admin-genesis)
@@ -29,7 +26,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runLoop } from './loop.js'
 import { stageWrite, describeVerdict, type Charter } from './envelope.js'
-import { readObservations, appendObservation, renderObservations } from './observations.js'
+import { readObservations, renderObservations } from './observations.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 // conductor/src -> conductor -> the system repo root (which holds envelope/ and conductor/)
@@ -70,7 +67,6 @@ async function exists(p: string): Promise<boolean> {
 async function main() {
   const argv = process.argv.slice(2)
   const dryRun = argv.includes('--dry-run')
-  const task = argv.filter((a) => !a.startsWith('--')).join(' ').trim()
 
   const charter = (process.env.CHARTER ?? 'genesis') as Charter
   const defaultSources = `admin-roli=${path.resolve(systemRoot, '..', '..', 'admin.roli.com')}`
@@ -121,16 +117,12 @@ async function main() {
     process.exit(ok ? 0 : 1)
   }
 
-  // A brief on the command line is not the input — it is filed into the ledger as
-  // one more human observation, so the ledger stays the single, durable ask.
-  if (task) {
-    const id = await appendObservation(observationsDir, { source: 'human', body: task })
-    console.error(`\nfiled CLI brief as observation ${id} (source: human)`)
-  }
+  // Running only reads the ledger — filing is a separate, deliberate act
+  // (`npm run observe`, or drop a record). The ledger stays the single, durable ask.
   const observations = await readObservations(observationsDir)
   if (observations.length === 0) {
-    console.error(`\nno observations to act on. add records to ${observationsDir}`)
-    console.error('or pass one:  npm start -- "…a need…"')
+    console.error(`\nno observations to act on. file one first:`)
+    console.error(`  npm run observe -- "…a need…"   (or add a record to ${observationsDir})`)
     process.exit(2)
   }
 
@@ -145,7 +137,7 @@ async function main() {
   // your subscription — or ANTHROPIC_API_KEY if that is set instead. No hard check
   // here; if no credential resolves, the SDK reports it when the run starts.
   const brief = renderObservations(observations)
-  console.error(`\nacting on ${observations.length} observation(s) from the log\n`)
+  console.error(`\nacting on ${observations.length} observation(s) from the ledger\n`)
   const result = await runLoop({ task: brief, ctx, maxTurns })
 
   console.error('\n══════════════════════════════════════════════════════════')

@@ -60,17 +60,25 @@ npm install
 # prove the seam without calling Claude (mutates nothing):
 npm start -- --dry-run
 
-# the real loop — needs an API key and a clean roli-admin tree:
-export ANTHROPIC_API_KEY=sk-ant-...
-npm start -- "Add a reusable Badge component under src/components/ui and document it"
+# file an observation into the ledger (does NOT run the agent):
+npm run observe -- "support reports bulk user export is missing"
+
+# the real loop — reads the observation ledger and acts on it:
+npm start
 ```
 
-Prerequisites: build the envelope once (`cd ../envelope && cargo build`) and keep
-`roli-admin`'s working tree clean (the envelope requires it so every change stays
-revertible).
+Auth is the Claude Agent SDK's: your Claude Code login (`~/.claude`) — i.e. your
+subscription — or `ANTHROPIC_API_KEY` if that is set instead. No key is passed in
+code. Running only reads the ledger; filing an observation is a separate act
+(`npm run observe`, or drop a record under `observations/`).
+
+Prerequisite: build the envelope once (`cd ../envelope && cargo build`). The
+workspace is established fresh by the envelope — nothing needs a pre-existing clean
+tree.
 
 Config is via env (all optional — see [`.env.example`](.env.example)):
-`ROLI_ADMIN_REPO`, `ENVELOPE_BIN`, `CONDUCTOR_AUDIT`, `MAX_TURNS`.
+`WORKSPACE`, `OBSERVATIONS`, `OBSERVE_SOURCES`, `CHARTER`, `ENVELOPE_BIN`,
+`CONDUCTOR_AUDIT`, `MAX_TURNS`.
 
 ## The brain's tools
 

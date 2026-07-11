@@ -97,10 +97,11 @@ why the two prose ledgers may be open while the enforced one stays closed.
   `docs/adr/NNNN-*.md` in the outcome, committed with its changeset, in place of a
   single rewritten plan.
 - The conductor gains an observation ledger — a directory of numbered, immutable
-  records each carrying a `source` — read oldest-first as the standing ask. The CLI
-  brief is filed as one more human record, not the primary input. A monitoring
-  adapter files the same shape by dropping a record; the ingestion fabric itself is
-  deferred.
+  records each carrying a `source` — read oldest-first as the standing ask. Running
+  the conductor only **reads** the ledger; **filing** an observation is a separate,
+  deliberate act — a dedicated `observe` command, or a monitoring adapter dropping
+  the same shape. Filing and running are different verbs and do not share a command.
+  The ingestion fabric itself is deferred.
 - The brief instructs the agent to open ADR-0001 with the genesis strategy and add a
   record per significant decision thereafter.
 - The trust thesis and the changeset/charter core are unchanged. Only the
