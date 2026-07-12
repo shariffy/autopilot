@@ -39,7 +39,7 @@ echo "<file contents>" | cargo run -- adjudicate \
   --repo <path-to-outcome> --path src/components/Badge.tsx --intent "add Badge"
 ```
 
-`reach` is decided by the *same* `Policy` the demo uses. Reversibility is real
+`reach` is decided by the *same* `Policy` the showcase uses. Reversibility is real
 git: the tree must be clean, the change is committed on a green build or restored
 on a red one. Verification is the repository's own `npm run build` — run *inside*
 the envelope, so the proposer still cannot supply what it is judged by. This is
@@ -58,7 +58,7 @@ DENIALS   change_shape=1  immutable_policy=1  reach=2
 REVERTED  task_completion
 ```
 
-The point of the demo: **none of these outcomes depend on the agent being
+The point: **none of these outcomes depend on the agent being
 well-behaved.** The boundary produces them regardless.
 
 ## How it works
@@ -102,12 +102,12 @@ src/
   guardrails.rs     trusted outcome-gate policy (SLOs)
   telemetry.rs      trusted source of production health (agent has no handle)
   verifier.rs       trusted source of verification (CI + agentic UI checks)
-  reversible.rs     reversible effects + the encapsulated World (in-memory demo)
+  reversible.rs     reversible effects + the encapsulated World (in-memory harness)
   worktree.rs       the REAL git-backed effector + build verifier (adjudicate path)
   decision_log.rs   append-only audit trail
   types.rs          the closed Action / Verdict / Outcome model
   agent.rs          a STUB untrusted agent (stands in for a real model)
-  main.rs           wires it together; runs the demo, or `adjudicate` for real
+  main.rs           wires it together; runs the showcase, or `adjudicate` for real
 ```
 
 The real untrusted agent lives in a separate project — [conductor](../conductor),
@@ -122,9 +122,9 @@ a Claude-driven loop — and reaches the world only through `envelope adjudicate
 
 ## Status
 
-This is a frontier **demo** of the structural-trust thesis: it runs, it is
-tested, and its boundary is real. It is not a production system. The known gaps
-are tracked honestly as residuals in the [threat model](../docs/THREAT_MODEL.md).
+Runnable, not yet production-hardened: it runs, it is tested, and its boundary is
+real. The known gaps are tracked honestly as residuals in the
+[threat model](../docs/THREAT_MODEL.md).
 
 The structural keystone — putting the agent across a process seam, with the real
 gate on the trusted side — is now built: the [conductor](../conductor) is a real

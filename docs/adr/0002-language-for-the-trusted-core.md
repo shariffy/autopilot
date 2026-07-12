@@ -13,12 +13,11 @@ construction. Its thesis is *structural trust*: the agent is untrusted and
 fallible, and trust comes from a small, auditable boundary rather than from the
 agent's behaviour.
 
-This is a frontier demo of that thesis — which raises, not lowers, the bar on the
-boundary. A demo whose entire claim is "trust is by construction, the boundary is
-real" is only as credible as the boundary actually is. So **soundness of the
-trusted core is a requirement of the demo itself**: there is no version of this
-project in which a weaker boundary is acceptable, because the boundary is the
-thing being demonstrated.
+That thesis raises, not lowers, the bar on the boundary. A claim that "trust is by
+construction, the boundary is real" is only as credible as the boundary actually
+is. So **soundness of the trusted core is a requirement of the claim itself**:
+there is no version of this project in which a weaker boundary is acceptable,
+because the boundary is the thing being demonstrated.
 
 ### What this component is
 1. A **closed-world model**: a finite set of actions and a finite set of verdicts,

@@ -1,7 +1,7 @@
 //! The real, git-backed effector: how the trusted core actually touches the
 //! governed repository.
 //!
-//! The conceptual demo (`main`, `reversible::World`) proves the *shape* of the
+//! The in-memory harness (`main`, `reversible::World`) proves the *shape* of the
 //! guarantees in-memory. This module is where they become real: proposed writes
 //! are applied to a working tree on disk, verified by the repository's own build,
 //! and then committed or reverted — using git itself as the reversibility

@@ -4,7 +4,7 @@
 //! In the real system this is the strongest available model proposing changes
 //! from telemetry. Here it returns a fixed batch that deliberately includes
 //! good, forbidden, unverified, unhealthy, and self-escalating proposals — so
-//! the demo can show the harness handles all of them the same deterministic way,
+//! the showcase can show the harness handles all of them the same deterministic way,
 //! with no trust placed in the agent itself.
 //!
 //! The backend is external and provided; the agent only touches the frontend

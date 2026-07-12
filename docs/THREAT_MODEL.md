@@ -31,14 +31,14 @@ construction.
 
 | Actor | Trust | Role |
 |---|---|---|
-| **Agent** | **Untrusted** | Proposes actions. Assumed adversarial: may lie, escalate, or try to bypass. In the real demo this is the [conductor](../../conductor), a Claude-driven process. |
+| **Agent** | **Untrusted** | Proposes actions. Assumed adversarial: may lie, escalate, or try to bypass. In production this is the [conductor](../../conductor), a Claude-driven process. |
 | **Reference monitor** (`harness`, `policy`, `invariants`, `guardrails`, `reversible`, `worktree`) | **Trusted (the TCB)** | The single chokepoint. Small and auditable on purpose. |
 | **Telemetry** (`telemetry::Telemetry`) | **Trusted** | The source of truth for production health. The agent has no handle to it. |
 | **Verifier** (`worktree::BuildVerifier` — the repo's own build) | **Trusted** | Decides "fit to ship"; runs inside the monitor, not the agent. |
 | **The world** (frontend repo + deploy — `reversible::World` in-memory; the real git work tree via `worktree`) | Protected | Only mutated via the monitor. |
 
 There are two enaction paths, sharing the same policy kernel: `Harness::enact`
-(the in-memory conceptual demo) and `worktree::adjudicate_write` (the real
+(the in-memory harness) and `worktree::adjudicate_write` (the real
 git-backed path behind `envelope adjudicate`). Each is a single chokepoint from a
 proposed action to a real effect.
 
@@ -47,7 +47,7 @@ proposed action to a real effect.
 - **A1.** The trusted core is correct and cannot be modified by the agent. The
   agent cannot edit files under `envelope/` (enforced by the `reach` invariant)
   and cannot change policy at runtime (enforced by `immutable_policy`).
-- **A2.** Telemetry reflects reality and the agent cannot write to it. In the demo
+- **A2.** Telemetry reflects reality and the agent cannot write to it. Today
   this is a seeded stub; in production it is a monitoring system behind the
   `Telemetry` trait, on infrastructure the agent has no credentials for.
 - **A3.** Guardrail thresholds and the invariant set are authored by trusted
@@ -56,7 +56,7 @@ proposed action to a real effect.
 - **A4.** When the agent runs as a separate process (see Residuals), the seam
   between it and the monitor is authenticated, so a compromised agent cannot
   impersonate the monitor or the telemetry source.
-- **A5.** Verification reflects reality and the agent cannot forge it. In the demo
+- **A5.** Verification reflects reality and the agent cannot forge it. Today
   this is a seeded stub; in production it is CI plus agentic UI verification on
   infrastructure the agent cannot influence.
 
@@ -78,16 +78,16 @@ Each threat assumes a capable, adversarial agent.
 
 ## Residual risks and assumptions to discharge
 
-These are known and **not** yet mitigated. They are the honest edge of the demo.
+These are known and **not** yet mitigated. They are the honest edge of the system.
 
-- **R1 — Telemetry integration (discharges A2).** The demo seeds a stub. The model
+- **R1 — Telemetry integration (discharges A2).** The harness seeds a stub. The model
   is only as strong as a real, agent-isolated monitoring integration. Until that
   exists, T5 holds *by construction of the type* but the "trusted source" is the
-  demo author.
+  operator.
 - **R2 — In-crate mediation.** T8's guarantee within a single crate is "the world's
   mutators are `pub(crate)` and `&mut World` is held only in `enact`", so an
   in-crate mistake could still reach them. Hard isolation would require splitting
-  the core into its own crate or process — deliberately not done, to keep the demo
+  the core into its own crate or process — deliberately not done, to keep the TCB
   a single small crate.
 - **R3 — Process seam exists; authentication does not (partially discharges A4).**
   The real agent (the conductor) is now a separate process, and its only write
@@ -104,7 +104,7 @@ These are known and **not** yet mitigated. They are the honest edge of the demo.
   written to a file; it is not signed or hash-chained, so a compromise of the host
   could rewrite it.
 - **R7 — Verifier: build is real, UI verification is not (partially discharges
-  A5).** The conceptual demo seeds a stub; the real `adjudicate` path runs the
+  A5).** The in-memory harness seeds a stub; the real `adjudicate` path runs the
   repo's own `npm run build` (typecheck + bundle) inside the monitor, so the
   typecheck/compile half of T3 is genuinely enforced and the agent cannot
   self-certify. What remains is **agentic UI verification** — actually driving the
@@ -117,7 +117,7 @@ These are known and **not** yet mitigated. They are the honest edge of the demo.
   the write allowlist, so the agent cannot alter the verifier it is judged by — but
   a written source file that the build configuration imports could in principle run
   at build time. Hardening (sandboxed/network-isolated build, pinned toolchain) is
-  not yet done; the demo runs the build in the local environment.
+  not yet done; the build runs in the local environment.
 - **R9 — Real path not in the unit suite.** `worktree::adjudicate_write` is
   verified by a documented end-to-end smoke run (it needs `git` and `npm`), not by
   `cargo test`. The pure kernel it reuses (`reach`, `policy`) *is* unit-tested; the

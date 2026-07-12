@@ -1,7 +1,7 @@
 //! Envelope — a runnable skeleton of the trusted core.
 //!
 //! An untrusted agent proposes a batch of changes; the reference monitor decides
-//! the fate of each one deterministically. The point of the demo: not a single
+//! the fate of each one deterministically. The point: not a single
 //! outcome depends on the agent being well-behaved. Trust comes from the
 //! boundary, not the brain.
 
@@ -43,9 +43,9 @@ impl Summary {
     }
 }
 
-/// Build the harness wired to the demo's trusted sources. Shared by `main` and
+/// Build the harness wired to the showcase's trusted sources. Shared by `main` and
 /// the end-to-end test so they exercise exactly the same configuration.
-fn demo_harness() -> Harness {
+fn showcase_harness() -> Harness {
     // Trusted telemetry, seeded out-of-band: a stand-in for a monitoring system
     // the agent cannot write to.
     let telemetry = StubTelemetry::new()
@@ -131,22 +131,22 @@ fn main() -> ExitCode {
         // Abandon an open changeset: reset the tree to the clean baseline.
         Some("reset") => cmd_reset(&args[2..]),
         Some(other) => {
-            eprintln!("unknown subcommand `{other}`; run with no arguments for the demo");
+            eprintln!("unknown subcommand `{other}`; run with no arguments for the showcase");
             ExitCode::from(2)
         }
         None => {
-            run_demo();
+            run_showcase();
             ExitCode::SUCCESS
         }
     }
 }
 
-/// The real adjudication path: the trusted core acting on the live `roli-admin`
+/// The real adjudication path: the trusted core acting on the live outcome
 /// working tree on behalf of the untrusted brain.
 ///
 /// Channel discipline IS the trust boundary. The brain can express only a write —
 /// `--repo`, `--path`, `--intent`, with the file body on stdin. The verdict is
-/// decided by the same pure policy kernel the demo uses, then enacted, verified by
+/// decided by the same pure policy kernel the showcase uses, then enacted, verified by
 /// the repo's own build, and committed or reverted. The brain supplies none of
 /// the things it is judged by; it cannot even name them here.
 fn adjudicate(args: &[String]) -> ExitCode {
@@ -186,7 +186,7 @@ fn adjudicate(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // Same pure kernel as the demo: deny-by-default reach plus immutable-policy.
+    // Same pure kernel as the showcase: deny-by-default reach plus immutable-policy.
     let action = Action::WriteFile {
         path: path.clone(),
         bytes: content.len(),
@@ -478,12 +478,12 @@ fn json_str(s: &str) -> String {
     out
 }
 
-fn run_demo() {
-    println!("ENVELOPE — trusted core demo");
+fn run_showcase() {
+    println!("ENVELOPE — trusted core showcase");
     println!("The agent is untrusted. Every proposal passes through the reference");
     println!("monitor, which produces each verdict below deterministically.\n");
 
-    let mut harness = demo_harness();
+    let mut harness = showcase_harness();
     let summary = run(&mut harness);
 
     let world = harness.world();
@@ -531,12 +531,12 @@ fn run_demo() {
 mod tests {
     use super::*;
 
-    /// Locks in the demo's headline result: the exact verdicts the showcase
+    /// Locks in the showcase's headline result: the exact verdicts the batch
     /// depends on. If a future change alters the boundary's behaviour, this fails
-    /// rather than the demo silently telling a different story.
+    /// rather than the showcase silently telling a different story.
     #[test]
-    fn demo_batch_produces_expected_verdicts() {
-        let mut harness = demo_harness();
+    fn showcase_batch_produces_expected_verdicts() {
+        let mut harness = showcase_harness();
         let summary = run(&mut harness);
 
         assert_eq!(summary.committed, 3);

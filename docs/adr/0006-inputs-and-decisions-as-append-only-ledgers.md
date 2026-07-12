@@ -41,7 +41,7 @@ The agent is given a set of **sources**: named, read-only roots it may observe
 several. A source is a **capability** — what the agent may read — configured by the
 operator, never chosen by the agent. Which sources exist, and that one happens to be
 a git repo worth cloning, is data, not vocabulary in the trusted core or the tool
-surface. A live or foreign source (e.g. `admin.roli.com`) stays read-only; to build
+surface. A live or foreign source (e.g. a deployed predecessor) stays read-only; to build
 on it the agent adopts a clone, which the envelope governs.
 
 ### 2. Observations are a source-tagged, append-only log — one door for every origin

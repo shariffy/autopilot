@@ -135,7 +135,7 @@ itself):
 
 These are populations of a workspace, not strategies. In-place is available only
 when the repo may be safely written (clean, owned); a live or foreign source — like
-`admin.roli.com` — is read-only, so the agent must clone, extract, or rebuild from
+a deployed predecessor — is read-only, so the agent must clone, extract, or rebuild from
 it. That is a real constraint the agent reasons about, not a default the
 architecture bakes in. Whatever the starting-point and strategy, the result is the
 same mechanism: **changesets against the workspace**, each green, atomic,
@@ -163,7 +163,7 @@ choose like a senior engineer.
   workspace starting-point (empty | clone | copied subset | in-place clean repo);
   a trusted setup step materialises it. The conductor pre-selects nothing.
 - The first real run is observation-driven genesis: two observations (an admin tool
-  is needed; one already exists at `admin.roli.com`) → the agent observes the
+  is needed; one already exists as a deployed predecessor) → the agent observes the
   predecessor, **chooses its own strategy** (which may be to build little or
   nothing), records it in `PLAN.md`, and — if building is warranted — lands one
   green changeset for review.

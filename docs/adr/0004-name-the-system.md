@@ -26,7 +26,7 @@ The system needs its own name. Following ADR 0001's criteria, in order of weight
 3. **Does not invert the thesis** — must not name the system after the untrusted
    half. "Trust the envelope, not the brain"; naming the system `conductor` would
    put the brain on the marquee.
-4. **Register** — the demo is about what governed autonomy *makes possible*, so a
+4. **Register** — Charter is about what governed autonomy *makes possible*, so a
    generative name is preferred over a purely defensive one.
 
 ## Options considered
@@ -56,7 +56,7 @@ agent.* "Charter" names exactly that, and the design already embodies it:
 The agent is *chartered*: free to act and produce an outcome, within fixed limits
 it cannot widen, with every action verified and reversible. The name is generative
 (one *charters* a venture) rather than merely defensive, which matches what the
-demo is meant to show — what becomes possible when autonomy is safe by
+tool is meant to show — what becomes possible when autonomy is safe by
 construction.
 
 The components keep their names: **`envelope`** is the boundary that *enforces* the

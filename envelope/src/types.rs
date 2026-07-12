@@ -20,7 +20,7 @@ pub enum Action {
     /// telemetry and guardrail policy.
     Deploy { service: String, traffic_pct: u8 },
 
-    /// Attempt to alter the rules themselves. Exists so the demo can show it is
+    /// Attempt to alter the rules themselves. Exists so the showcase can show it is
     /// *structurally* refused — the agent can never widen its own envelope. It
     /// carries no payload: the request is denied without being inspected.
     ModifyPolicy,
