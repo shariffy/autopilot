@@ -18,13 +18,14 @@ The trust boundary and its two enaction paths — the in-memory `Harness::enact`
 the real git-backed `begin → stage → commit` — are built and unit-tested (the pure
 kernel: `reach`, `policy`, the outcome gate). The conductor runs on the Claude Agent
 SDK with its only write channel being the `envelope` binary. The observation ledger
-is seeded for the first real task (an admin tool for ROLI; a predecessor exists at
-`admin.roli.com`).
+is seeded for the first real task (a small admin web app; a predecessor deployment
+already exists).
 
 What has **not** happened: the system has never run a genesis loop to a committed
-outcome. There is no `roli-admin-genesis` yet, and `conductor/conductor-audit.jsonl`
-holds only rejected dry-run probes. Everything below is ordered around closing that
-gap first, then hardening the pieces the first real run will lean on.
+outcome. A project created with `charter init` has no established workspace yet,
+and its audit journal holds only rejected dry-run probes. Everything below is
+ordered around closing that gap first, then hardening the pieces the first real
+run will lean on.
 
 ## The order, and why
 
@@ -53,15 +54,15 @@ Until it does, every claim about the system is a claim about code that has not b
 exercised together. This milestone is not a feature; it is turning the key.
 
 **What lands.** A real run of the conductor against the seeded observations: the
-agent reads `admin.roli.com`, chooses its own strategy (per [ADR 0005](adr/0005-changesets-charters-and-observation-driven-genesis.md)
+agent reads the predecessor deployment, chooses its own strategy (per [ADR 0005](adr/0005-changesets-charters-and-observation-driven-genesis.md)
 §3 the choice is the agent's, and "do little" is a legitimate outcome), and — if it
 elects to build — lands **one** green, atomic, reach-bounded genesis changeset into a
-new outcome (default `../roli-admin-genesis`), opening `docs/adr/0001` in the outcome
+new outcome (the project's `workspace/`), opening `docs/adr/0001` in the outcome
 with its strategy per [ADR 0006](adr/0006-inputs-and-decisions-as-append-only-ledgers.md)
 §3.
 
 **Where it lives.** `conductor/` (the run), the new outcome repo (external, not
-vendored), and `conductor/conductor-audit.jsonl` (which should gain its first
+vendored), and the project's audit journal (which should gain its first
 `establish` / `stage` / `commit` records instead of only dry-run rejections).
 
 **Exit criterion.** A committed genesis changeset exists in the outcome, its build
@@ -128,12 +129,12 @@ touching the trust kernel (`reach`, `policy`, the outcome gate stay identical).
 
 **Exit criterion.** The kernel adjudicates against the effector abstraction, git is
 one implementor, and a second (even a trivial append-log) demonstrates the seam is
-real. Not a residual discharge — an architectural follow-on that keeps the demo
+real. Not a residual discharge — an architectural follow-on that keeps the tool
 honest about being outcome-agnostic.
 
 ## M5 — Harden the build sandbox and authenticate the seam (discharges R8, R3)
 
-**Why.** Two residuals that only bind once the system is more than a local demo:
+**Why.** Two residuals that only bind once the system is more than a local installation:
 
 - **[R8](THREAT_MODEL.md)** — running the outcome's build executes whatever the
   build does on the host. The build *definition* is already protected (it's outside
@@ -157,11 +158,11 @@ it — each with a test that fails when the property is removed.
 ## Not on this roadmap (and why)
 
 These residuals are known and deliberately deferred; they are not near-term because
-nothing above depends on them and each is a demo-scope choice, not an oversight.
+nothing above depends on them and each is a current-scope choice, not an oversight.
 
 - **R1 (real telemetry)** and **R4 (per-service guardrails)** — the outcome gate is
   built; wiring a real, agent-isolated monitoring integration is a production concern
-  beyond the frontend demo's scope.
+  beyond the current scope.
 - **  R2 (in-crate mediation)** — a hard isolation boundary (splitting the core into
   its own process) is explicitly traded away to keep the TCB a single small crate.
 - **R5 (resource bounds)** and **R6 (tamper-evident audit)** — throttling and a

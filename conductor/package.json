@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The untrusted brain: a Claude-driven loop that maintains roli-admin, governed by the envelope trust boundary.",
+  "description": "The untrusted brain: a Claude-driven loop that maintains a project's outcome, governed by the envelope trust boundary.",
+  "bin": {
+    "charter": "bin/charter.js"
+  },
   "scripts": {
-    "start": "tsx src/main.ts",
-    "observe": "tsx src/observe.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

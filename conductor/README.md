@@ -1,14 +1,14 @@
 # conductor
 
-The untrusted **brain** of the frontier demo: a Claude-driven loop that
-autonomously maintains **roli-admin** (the external *outcome*), able to change it
+The untrusted **brain** of Charter: a Claude-driven loop that
+autonomously maintains the external **outcome**, able to change it
 only through the [`envelope`](../envelope) trust boundary.
 
 > Don't trust the brain. Trust the envelope.
 
 This is the half people usually mean by "an AI that maintains a web tool on its
 own" — the model reads the codebase, decides what to change, and writes it. The
-point of the demo is the *other* half: it does all of that as an **untrusted**
+point of Charter is the *other* half: it does all of that as an **untrusted**
 component. Nothing it can do depends on it behaving well, because the only way it
 can touch a file is to ask the envelope, and the envelope decides — by
 construction, not by good intentions.
@@ -27,7 +27,7 @@ construction, not by good intentions.
   └───────────────────────────┘            └──────────────────────────────┘
                                                     │ commits
                                                     ▼
-                                              roli-admin (external outcome)
+                                              the outcome (external repo)
 ```
 
 The seam is a process boundary. The brain's *only* channel to the world is
@@ -40,8 +40,8 @@ verification: the build that decides "fit to ship" runs inside the envelope.
 Each proposed write comes back as one of:
 
 - **committed** — within the allowlist *and* the build passed. It is now a real
-  git commit in `roli-admin`, attributed to the change, with the rationale as the
-  message.
+  git commit in the outcome repo, attributed to the change, with the rationale as
+  the message.
 - **rejected** — outside the write allowlist (e.g. the API client under
   `src/api/`, `secrets/`, `infra/`, the envelope itself). Nothing touched disk.
 - **rolled_back** — allowed, but it broke the build. Reverted; the tree is clean
@@ -55,30 +55,36 @@ reviewable in git history.
 ## Run it
 
 ```sh
-npm install
+npm install && npm link   # once: puts `charter` on your PATH (tsx-run, no build step)
+
+# a project is a directory — make one and operate from inside it, like git:
+mkdir my-tool && cd my-tool
+charter init
 
 # prove the seam without calling Claude (mutates nothing):
-npm start -- --dry-run
+charter run --dry-run
 
 # file an observation into the ledger (does NOT run the agent):
-npm run observe -- "support reports bulk user export is missing"
+charter observe "support reports bulk user export is missing"
 
 # the real loop — reads the observation ledger and acts on it:
-npm start
+charter run
 ```
 
 Auth is the Claude Agent SDK's: your Claude Code login (`~/.claude`) — i.e. your
 subscription — or `ANTHROPIC_API_KEY` if that is set instead. No key is passed in
 code. Running only reads the ledger; filing an observation is a separate act
-(`npm run observe`, or drop a record under `observations/`).
+(`charter observe`, or drop a record in the project's `observations/`).
 
 Prerequisite: build the envelope once (`cd ../envelope && cargo build`). The
 workspace is established fresh by the envelope — nothing needs a pre-existing clean
 tree.
 
-Config is via env (all optional — see [`.env.example`](.env.example)):
-`WORKSPACE`, `OBSERVATIONS`, `OBSERVE_SOURCES`, `CHARTER`, `ENVELOPE_BIN`,
-`CONDUCTOR_AUDIT`, `MAX_TURNS`.
+Everything project-scoped comes from the **project you are standing in** — the
+nearest ancestor directory holding `project.json` (workspace, sources, charter),
+alongside the observation ledger and the audit journal
+([ADR 0007](../docs/adr/0007-the-project-as-the-unit-of-oversight.md)). Env is system-level only
+(see [`.env.example`](.env.example)): `ENVELOPE_BIN`, `MAX_TURNS`.
 
 ## The brain's tools
 
@@ -94,25 +100,30 @@ Writing is the only thing that crosses the trust boundary.
 
 Two durable surfaces record what happened and why:
 
-- `roli-admin`'s **git history** — every landed change, with its rationale.
-- `conductor-audit.jsonl` — one line per *proposal* (including rejected and
-  rolled-back ones), with the full verdict. This is the "communicate what
-  changed, and what was refused" trail.
+- the outcome's **git history** — every landed change, with its rationale.
+- the project's `conductor-audit.jsonl` — one line per *proposal* (including
+  rejected and rolled-back ones), with the full verdict. This is the "communicate
+  what changed, and what was refused" trail.
 
 ## Layout
 
 ```
+bin/charter.js     the `charter` command (npm link once)
 src/
-  main.ts       entry point: config, preflight, --dry-run probe, run
-  loop.ts       the manual agentic loop (Claude proposes, envelope disposes)
-  tools.ts      the brain's tool surface (reads confined; propose_write gated)
-  envelope.ts   the typed seam to the trusted core (the only path to a write)
+  cli.ts           command dispatch: init | observe | run
+  project.ts       the project home: init, and resolving the project you stand in
+  run.ts           the run command: preflight, --dry-run probe, the loop
+  loop.ts          the manual agentic loop (Claude proposes, envelope disposes)
+  tools.ts         the brain's tool surface (reads confined; propose_write gated)
+  observations.ts  the observation ledger (read, file, render as the brief)
+  observe.ts       the observe command: file one observation into the ledger
+  envelope.ts      the typed seam to the trusted core (the only path to a write)
 ```
 
 ## Status
 
-A runnable frontier demo, not a production system. The build (`tsc` + `vite
-build`) is a real verification gate; the honest next step — tracked as the
-load-bearing residual in the [threat model](../docs/THREAT_MODEL.md)
-— is agentic **UI** verification: actually driving the rendered page to confirm a
-change works, not just that it compiles.
+Runnable, not yet production-hardened. The build (`tsc` + `vite build`) is a real
+verification gate; the honest next step — tracked as the load-bearing residual in
+the [threat model](../docs/THREAT_MODEL.md) — is agentic **UI** verification:
+actually driving the rendered page to confirm a change works, not just that it
+compiles.

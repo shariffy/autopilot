@@ -15,7 +15,7 @@ It has two parts, and the outcome is deliberately **not** one of them:
 |---|---|---|
 | [`envelope/`](envelope) | **trusted** | The reference monitor (Rust, zero-dependency). Decides every change: a deny-by-default reach allowlist, git-backed reversibility, and verification by the outcome's own build. Commits on green, reverts on red. |
 | [`conductor/`](conductor) | **untrusted** | The brain (TypeScript). A Claude-driven loop that reads the outcome and proposes writes. Its only channel to the world is asking the envelope. |
-| the **outcome** | — | The artifact being maintained (here, the `roli-admin` app). **External and swappable** — supplied to the system by configuration, never vendored here. |
+| the **outcome** | — | The artifact being maintained (here, a small admin web app). **External and swappable** — supplied to the system by configuration, never vendored here. |
 
 ```
    conductor  ──propose write──▶  envelope  ──commit / revert──▶  outcome
@@ -44,16 +44,20 @@ not a part you check out to understand it.
 # build the trusted core
 cd envelope && cargo build && cargo test
 
-# run the untrusted brain against an external outcome
-cd ../conductor && npm install
-npm start -- --dry-run        # prove the seam without calling Claude (mutates nothing)
+# install the brain; `npm link` puts the `charter` command on your PATH
+cd ../conductor && npm install && npm link
 
-export ANTHROPIC_API_KEY=sk-ant-...
-npm start -- "Add a reusable Badge component under src/components/ui"
+# a project is a directory — operate from inside it, like git
+mkdir ~/my-tool && cd ~/my-tool
+charter init                                     # make this directory a project
+charter run --dry-run                            # prove the seam (mutates nothing)
+charter observe "…what is noticed or wanted…"    # file into the ledger
+charter run                                      # act on the ledger
 ```
 
-By default the brain looks for the outcome at `../roli-admin` (a sibling of this
-repo); point it elsewhere with `ROLI_ADMIN_REPO`. See [conductor/README](conductor/README.md).
+A project directory holds `project.json` (the workspace to build, read-only
+sources, the charter in force), the observation ledger, and the audit journal.
+See [conductor/README](conductor/README.md).
 
 ## Documentation
 
@@ -65,7 +69,7 @@ repo); point it elsewhere with `ROLI_ADMIN_REPO`. See [conductor/README](conduct
 
 ## Status
 
-A runnable frontier **demo**, not a production system. The trust boundary is real
-and the build is a genuine verification gate. The load-bearing remaining residual
-is agentic **UI** verification — confirming a rendered page actually works, not just
-that it compiles — tracked honestly in the [threat model](docs/THREAT_MODEL.md).
+Runnable, not yet production-hardened. The trust boundary is real and the build is
+a genuine verification gate. The load-bearing remaining residual is agentic **UI**
+verification — confirming a rendered page actually works, not just that it
+compiles — tracked honestly in the [threat model](docs/THREAT_MODEL.md).

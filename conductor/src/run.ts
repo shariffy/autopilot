@@ -1,32 +1,24 @@
-// Entry point for the conductor — the untrusted brain that builds and maintains an
-// outcome under the envelope.
+// `charter run` — the untrusted brain builds and maintains the project's outcome
+// under the envelope.
 //
-// The only input is the observation ledger — a directory of numbered, immutable
-// records (observations/NNNN-*.md), mirroring docs/adr/. Running READS the ledger
-// and acts on it; it never writes to it. Filing an observation is its own act (a
-// reviewable ledger write) — use `npm run observe`, or drop a record directly. See
-// docs/adr/0006.
+// The only input is the project's observation ledger — a directory of numbered,
+// immutable records (observations/NNNN-*.md), mirroring docs/adr/. Running READS
+// the ledger and acts on it; it never writes to it. Filing an observation is its
+// own act (a reviewable ledger write) — `charter observe`, or drop a record
+// directly. See docs/adr/0006.
 //
-//   npm start                        # act on the observation ledger as it stands
-//   npm start -- --dry-run           # probe the envelope seam without calling Claude
-//   npm run observe -- "…a need…"    # file a new observation (does NOT run the agent)
-//
-// Config via env (all optional):
-//   WORKSPACE        the outcome to build/maintain     (default: ../roli-admin-genesis)
-//   OBSERVATIONS     the observation ledger directory   (default: ./observations)
-//   OBSERVE_SOURCES  read-only sources to observe, as   (default: admin-roli=../../admin.roli.com)
-//                    comma-separated name=path pairs; may be empty for a pure greenfield run
-//   CHARTER          reach charter: genesis|maintenance (default: genesis)
-//   ENVELOPE_BIN     the compiled trusted core          (default: envelope/target/debug/envelope)
-//   CONDUCTOR_AUDIT  change journal (JSONL)             (default: ./conductor-audit.jsonl)
-//   MAX_TURNS        loop iteration cap                 (default: 60)
+// The project is where the command is run (docs/adr/0007); everything
+// project-scoped comes from it. Config via env is system-level only (all optional):
+//   ENVELOPE_BIN  the compiled trusted core  (default: envelope/target/debug/envelope)
+//   MAX_TURNS     loop iteration cap         (default: 60)
 
 import { access, constants } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runLoop } from './loop.js'
-import { stageWrite, describeVerdict, type Charter } from './envelope.js'
+import { stageWrite, describeVerdict } from './envelope.js'
 import { readObservations, renderObservations } from './observations.js'
+import { currentProject } from './project.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 // conductor/src -> conductor -> the system repo root (which holds envelope/ and conductor/)
@@ -35,24 +27,6 @@ const systemRoot = path.resolve(here, '..', '..')
 function envPath(name: string, fallback: string): string {
   const v = process.env[name]
   return v ? path.resolve(v) : fallback
-}
-
-/**
- * Parse the observation sources: `name=path,name=path`. Which sources exist — and
- * that one happens to be a git repo worth cloning — is configuration, not baked in.
- * An empty setting means no sources (a pure greenfield run).
- */
-function parseSources(spec: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const pair of spec.split(',').map((s) => s.trim()).filter(Boolean)) {
-    const eq = pair.indexOf('=')
-    if (eq < 0) throw new Error(`bad OBSERVE_SOURCES entry "${pair}" (want name=path)`)
-    const name = pair.slice(0, eq).trim()
-    const p = pair.slice(eq + 1).trim()
-    if (!name || !p) throw new Error(`bad OBSERVE_SOURCES entry "${pair}" (want name=path)`)
-    out[name] = path.resolve(p)
-  }
-  return out
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -64,24 +38,18 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-async function main() {
-  const argv = process.argv.slice(2)
+export async function run(argv: string[]): Promise<void> {
   const dryRun = argv.includes('--dry-run')
 
-  const charter = (process.env.CHARTER ?? 'genesis') as Charter
-  const defaultSources = `admin-roli=${path.resolve(systemRoot, '..', '..', 'admin.roli.com')}`
+  const project = await currentProject()
   const ctx = {
-    // The outcome the agent will establish and build — a fresh sibling, not the
-    // existing roli-admin, so the genesis is genuine.
-    repo: envPath('WORKSPACE', path.resolve(systemRoot, '..', 'roli-admin-genesis')),
-    // Named read-only observation sources. One is the predecessor from the second
-    // observation; there could be zero, or several, and none is privileged.
-    sources: parseSources(process.env.OBSERVE_SOURCES ?? defaultSources),
+    repo: project.workspace,
+    sources: project.sources,
     envelopeBin: envPath('ENVELOPE_BIN', path.join(systemRoot, 'envelope', 'target', 'debug', 'envelope')),
-    charter,
-    auditPath: envPath('CONDUCTOR_AUDIT', path.join(here, '..', 'conductor-audit.jsonl')),
+    charter: project.charter,
+    auditPath: project.auditPath,
   }
-  const observationsDir = envPath('OBSERVATIONS', path.join(here, '..', 'observations'))
+  const observationsDir = project.observationsDir
   const maxTurns = Number(process.env.MAX_TURNS ?? 60)
 
   // Preflight: the seam must exist before we let the brain near it.
@@ -92,6 +60,7 @@ async function main() {
   }
 
   const sourceNames = Object.keys(ctx.sources)
+  console.error(`project    ${project.dir}`)
   console.error(`workspace  ${ctx.repo}`)
   console.error(`ledger     ${observationsDir}`)
   console.error(`sources    ${sourceNames.length ? sourceNames.map((n) => `${n} -> ${ctx.sources[n]}`).join(', ') : '(none)'}`)
@@ -118,18 +87,18 @@ async function main() {
   }
 
   // Running only reads the ledger — filing is a separate, deliberate act
-  // (`npm run observe`, or drop a record). The ledger stays the single, durable ask.
+  // (`charter observe`, or drop a record). The ledger stays the single, durable ask.
   const observations = await readObservations(observationsDir)
   if (observations.length === 0) {
     console.error(`\nno observations to act on. file one first:`)
-    console.error(`  npm run observe -- "…a need…"   (or add a record to ${observationsDir})`)
+    console.error(`  charter observe "…a need…"   (or add a record to ${observationsDir})`)
     process.exit(2)
   }
 
   for (const [name, root] of Object.entries(ctx.sources)) {
     if (!(await exists(root))) {
       console.error(`\nobservation source "${name}" not found at ${root}`)
-      console.error('fix OBSERVE_SOURCES (name=path,...) or unset it for a greenfield run')
+      console.error(`fix "sources" in ${path.join(project.dir, 'project.json')} (empty = greenfield run)`)
       process.exit(1)
     }
   }
@@ -152,8 +121,3 @@ async function main() {
   }
   console.error(`journal: ${ctx.auditPath}`)
 }
-
-main().catch((e) => {
-  console.error(e)
-  process.exit(1)
-})

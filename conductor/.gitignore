@@ -1,5 +1,4 @@
 node_modules/
-conductor-audit.jsonl
 *.log
 .env
 .env.local
