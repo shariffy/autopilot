@@ -1,22 +1,25 @@
-# conductor
+# advisor
 
-The untrusted **brain** of Charter: a Claude-driven loop that
+The untrusted **brain** of Autopilot: a Claude-driven loop that
 autonomously maintains the external **outcome**, able to change it
 only through the [`envelope`](../envelope) trust boundary.
 
 > Don't trust the brain. Trust the envelope.
 
-This is the half people usually mean by "an AI that maintains a web tool on its
-own" — the model reads the codebase, decides what to change, and writes it. The
-point of Charter is the *other* half: it does all of that as an **untrusted**
-component. Nothing it can do depends on it behaving well, because the only way it
-can touch a file is to ask the envelope, and the envelope decides — by
-construction, not by good intentions.
+In the aviation frame Autopilot takes its name from, this is the **flight
+director**: it reads the state of things and proposes a correction, but it has
+no authority to actuate anything itself. This is the half people usually mean by
+"an AI that maintains a web tool on its own" — the model reads the codebase,
+decides what to change, and writes it. The point of Autopilot is the *other*
+half: it does all of that as an **untrusted** component. Nothing it can do
+depends on it behaving well, because the only way it can touch a file is to ask
+the envelope, and the envelope decides — by construction, not by good
+intentions. The advisor proposes; the envelope disposes.
 
 ## The shape of it
 
 ```
-  conductor (this project)                 envelope (../envelope)
+  advisor (this project)                    envelope (../envelope)
   ┌───────────────────────────┐            ┌──────────────────────────────┐
   │ Claude (Opus 4.8, untrusted)│  propose  │ trusted core (Rust, zero-dep) │
   │   reads the repo            │  write    │   reach allowlist (deny-by-   │
@@ -55,33 +58,33 @@ reviewable in git history.
 ## Run it
 
 ```sh
-npm install && npm link   # once: puts `charter` on your PATH (tsx-run, no build step)
+npm install && npm link   # once: puts `autopilot` on your PATH (tsx-run, no build step)
 
 # a project is a directory — make one and operate from inside it, like git:
 mkdir my-tool && cd my-tool
-charter init
+autopilot init
 
 # prove the seam without calling Claude (mutates nothing):
-charter run --dry-run
+autopilot run --dry-run
 
 # file an observation into the ledger (does NOT run the agent):
-charter observe "support reports bulk user export is missing"
+autopilot observe "support reports bulk user export is missing"
 
 # the real loop — reads the observation ledger and acts on it:
-charter run
+autopilot run
 ```
 
 Auth is the Claude Agent SDK's: your Claude Code login (`~/.claude`) — i.e. your
 subscription — or `ANTHROPIC_API_KEY` if that is set instead. No key is passed in
 code. Running only reads the ledger; filing an observation is a separate act
-(`charter observe`, or drop a record in the project's `observations/`).
+(`autopilot observe`, or drop a record in the project's `observations/`).
 
 Prerequisite: build the envelope once (`cd ../envelope && cargo build`). The
 workspace is established fresh by the envelope — nothing needs a pre-existing clean
 tree.
 
 Everything project-scoped comes from the **project you are standing in** — the
-nearest ancestor directory holding `project.json` (workspace, sources, charter),
+nearest ancestor directory holding `project.json` (workspace, sources, clearance),
 alongside the observation ledger and the audit journal
 ([ADR 0007](../docs/adr/0007-the-project-as-the-unit-of-oversight.md)). Env is system-level only
 (see [`.env.example`](.env.example)): `ENVELOPE_BIN`, `MAX_TURNS`.
@@ -101,14 +104,14 @@ Writing is the only thing that crosses the trust boundary.
 Two durable surfaces record what happened and why:
 
 - the outcome's **git history** — every landed change, with its rationale.
-- the project's `conductor-audit.jsonl` — one line per *proposal* (including
+- the project's `advisor-audit.jsonl` — one line per *proposal* (including
   rejected and rolled-back ones), with the full verdict. This is the "communicate
   what changed, and what was refused" trail.
 
 ## Layout
 
 ```
-bin/charter.js     the `charter` command (npm link once)
+bin/autopilot.js   the `autopilot` command (npm link once)
 src/
   cli.ts           command dispatch: init | observe | run
   project.ts       the project home: init, and resolving the project you stand in

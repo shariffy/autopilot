@@ -1,4 +1,4 @@
-# ADR 0005 — Changesets, charters, and observation-driven genesis
+# ADR 0005 — Changesets, clearances, and observation-driven genesis
 
 - **Status:** Accepted
 - **Date:** 2026-06-30
@@ -68,26 +68,26 @@ Per-write maintenance becomes the **one-stage special case** (begin → stage on
 file → commit). Genesis is the **many-stage case** (begin → stage a whole scaffold
 or large edit → commit, build runs once). They are the same mechanism.
 
-### 2. Reach is a charter chosen by lifecycle stage, not by the agent's strategy
+### 2. Reach is a clearance chosen by lifecycle stage, not by the agent's strategy
 
-The reach lists are not a global constant; they are the **charter** granted over a
-specific outcome. The charter is selected by **lifecycle stage** — whether a
+The reach lists are not a global constant; they are the **clearance** granted over a
+specific outcome. The clearance is selected by **lifecycle stage** — whether a
 governed app has been launched yet — and is the same regardless of the strategy
 the agent chooses (§3). The agent's strategy must never select its own authority:
 
-- **Genesis charter** — in force during establishment, before a governed app is
+- **Genesis clearance** — in force during establishment, before a governed app is
   launched. Broad *within the outcome workspace*: any path except `secrets/` and
   `.git/` (traversal out of the root remains refused by the existing lexical
   normaliser). This is the authority to bring an app into existence or to perform
   structural surgery on adopted code — its config, API client, and auth — and it is
   identical however the workspace was first populated (§3).
-- **Maintenance charter** — in force after launch. The narrow allowlist fitted to
+- **Maintenance clearance** — in force after launch. The narrow allowlist fitted to
   the app's layout; `src/api/`, `secrets/`, `infra/`, and the like are frozen.
 
 The transition **Genesis → Maintenance happens at launch and is human-gated.**
 Genesis produces one atomic, verified changeset plus a written plan; the structural
 gate is at *launch* — exposing a v0 to real users and data — not at the agent's
-strategy decision. A human ratifies, the charter narrows, and the agent operates
+strategy decision. A human ratifies, the clearance narrows, and the agent operates
 autonomously thereafter. (An app already governed and launched is simply in
 Maintenance; a strategy that only extends it never needs Genesis at all.)
 
@@ -120,7 +120,7 @@ pre-digested brief, and not a fixed set of options.
 anywhere a senior engineer would — do little or nothing (the need may already be
 met), extend, extract a slice, fork and modernise, migrate incrementally, or
 rebuild greenfield. The trusted core encodes **no `amend|rebuild` enum**, and the
-conductor pre-selects nothing. The chosen strategy lives in the agent's
+advisor pre-selects nothing. The chosen strategy lives in the agent's
 human-readable `PLAN.md`, not in policy — the trust boundary is indifferent to it.
 
 What the architecture exposes instead is a **workspace starting-point**, a
@@ -151,17 +151,17 @@ choose like a senior engineer.
   the outcome itself defines (the predecessor's own build when amending; the
   scaffold's `npm run build` when rebuilding), installing dependencies first when
   the workspace has none.
-- `reach.rs` gains a charter selector (Genesis vs Maintenance) keyed to lifecycle
+- `reach.rs` gains a clearance selector (Genesis vs Maintenance) keyed to lifecycle
   stage, not to the agent's strategy. The narrow fitted allowlist is the
-  Maintenance charter; the Genesis charter is workspace-confined minus `secrets/`
+  Maintenance clearance; the Genesis clearance is workspace-confined minus `secrets/`
   and `.git/`.
-- The conductor gains read-only reference tools (`list_reference`/`read_reference`)
+- The advisor gains read-only reference tools (`list_reference`/`read_reference`)
   confined to a reference repo, and a changeset lifecycle around the loop. It
   writes a `PLAN.md` as the first staged file so the plan is committed with the
   build it produced.
 - The trusted core encodes **no strategy enum**. The agent's plan selects a
   workspace starting-point (empty | clone | copied subset | in-place clean repo);
-  a trusted setup step materialises it. The conductor pre-selects nothing.
+  a trusted setup step materialises it. The advisor pre-selects nothing.
 - The first real run is observation-driven genesis: two observations (an admin tool
   is needed; one already exists as a deployed predecessor) → the agent observes the
   predecessor, **chooses its own strategy** (which may be to build little or

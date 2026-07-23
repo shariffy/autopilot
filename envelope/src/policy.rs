@@ -9,34 +9,34 @@
 //! `change_shape`) and health (`telemetry` + `guardrails`) — are applied by the
 //! harness, not here, because they cannot be decided from the action alone.
 
-use crate::invariants::reach::Charter;
+use crate::invariants::reach::Clearance;
 use crate::types::{Action, Verdict, Violation};
 
 pub struct Policy {
-    charter: Charter,
+    clearance: Clearance,
 }
 
 impl Policy {
-    /// Construct the policy for a given reach charter. To audit the action-only
+    /// Construct the policy for a given reach clearance. To audit the action-only
     /// rules, read this struct plus the invariant modules it names; the
     /// verification and outcome gates live in the harness.
-    pub fn for_charter(charter: Charter) -> Self {
-        Policy { charter }
+    pub fn for_clearance(clearance: Clearance) -> Self {
+        Policy { clearance }
     }
 
     /// The canonical reference monitor for an app under maintenance — the narrow,
-    /// fitted charter that the structural-trust thesis is about. Genesis-stage
-    /// adjudication is constructed explicitly with [`Policy::for_charter`].
+    /// fitted clearance that the structural-trust thesis is about. Genesis-stage
+    /// adjudication is constructed explicitly with [`Policy::for_clearance`].
     pub fn reference_monitor() -> Self {
-        Policy::for_charter(Charter::Maintenance)
+        Policy::for_clearance(Clearance::Maintenance)
     }
 
     /// Evaluate every action-only invariant and aggregate their findings. Deny if
     /// any rule is violated; otherwise allow. The rules are the immutable-policy
-    /// guarantee and the reach charter currently in force.
+    /// guarantee and the reach clearance currently in force.
     pub fn evaluate(&self, action: &Action) -> Verdict {
         let mut violations: Vec<Violation> = immutable_policy(action);
-        violations.extend(self.charter.check(action));
+        violations.extend(self.clearance.check(action));
         if violations.is_empty() {
             Verdict::Allow
         } else {

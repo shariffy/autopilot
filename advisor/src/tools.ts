@@ -6,7 +6,7 @@
 // defined here — every effect still crosses the envelope seam. Reads are confined
 // to the workspace and the named observation sources; the sole way to *change*
 // anything is establish + stage + commit, adjudicated by the envelope under the
-// charter in force. The brain never touches the filesystem directly and never
+// clearance in force. The brain never touches the filesystem directly and never
 // decides its own reach.
 
 import { readFile, readdir, stat, appendFile } from 'node:fs/promises'
@@ -18,7 +18,7 @@ import {
   stageWrite,
   commitChangeset,
   describeVerdict,
-  type Charter,
+  type Clearance,
   type Verdict,
 } from './envelope.js'
 
@@ -31,8 +31,8 @@ export interface ToolContext {
   sources: Record<string, string>
   /** Path to the compiled envelope binary. */
   envelopeBin: string
-  /** The reach charter in force, set by lifecycle stage — not by the brain. */
-  charter: Charter
+  /** The reach clearance in force, set by lifecycle stage — not by the brain. */
+  clearance: Clearance
   /** Where to append the brain's own change journal (JSONL). */
   auditPath: string
 }
@@ -43,8 +43,8 @@ export interface LoopState {
   established: boolean
 }
 
-/** The MCP server name; tools are exposed to the agent as mcp__charter__<tool>. */
-export const SERVER_NAME = 'charter'
+/** The MCP server name; tools are exposed to the agent as mcp__autopilot__<tool>. */
+export const SERVER_NAME = 'autopilot'
 
 /** A text-only tool result, the shape the Agent SDK expects. */
 function text(s: string) {
@@ -191,7 +191,7 @@ export function buildToolServer(ctx: ToolContext, state: LoopState) {
         bin: ctx.envelopeBin,
         repo: ctx.repo,
         path: args.path,
-        charter: ctx.charter,
+        clearance: ctx.clearance,
         content: args.content,
       })
       await journal(ctx, { action: 'stage', path: args.path, intent, verdict })

@@ -1,6 +1,6 @@
 # ADR 0004 — Name the system
 
-- **Status:** Accepted
+- **Status:** Superseded by [0008](0008-rename-the-system-to-autopilot.md)
 - **Date:** 2026-06-29
 - **Scope:** the name of the **system as a whole** — the repository that contains
   the trusted core and the brain. Not the names of the components (ADR 0001 names

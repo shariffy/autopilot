@@ -5,11 +5,11 @@
 - **Scope:** how observations enter the system, how the sources they point at are
   named, and how the agent records its reasoning. Supersedes the reference-repo and
   `PLAN.md` specifics of ADR 0005 (§3 and its consequences); leaves the
-  changeset/charter core and the trust thesis unchanged.
+  changeset/clearance core and the trust thesis unchanged.
 
 ## Context
 
-ADR 0005 established the changeset core, the lifecycle charters, and that the
+ADR 0005 established the changeset core, the lifecycle clearances, and that the
 strategy is the agent's. In settling those, it fixed three incidental specifics
 that do not generalise:
 
@@ -92,18 +92,18 @@ why the two prose ledgers may be open while the enforced one stays closed.
 - Supersedes the reference-repo specifics of ADR 0005: `list_reference`/
   `read_reference` over a single `referenceRepo` become `list_source`/`read_source`
   over 0..n named sources; the establish mode `clone_reference` becomes
-  source-agnostic `clone{source}`. (Landed in the conductor.)
+  source-agnostic `clone{source}`. (Landed in the advisor.)
 - Supersedes the `PLAN.md` specific of ADR 0005: the agent writes
   `docs/adr/NNNN-*.md` in the outcome, committed with its changeset, in place of a
   single rewritten plan.
-- The conductor gains an observation ledger — a directory of numbered, immutable
+- The advisor gains an observation ledger — a directory of numbered, immutable
   records each carrying a `source` — read oldest-first as the standing ask. Running
-  the conductor only **reads** the ledger; **filing** an observation is a separate,
+  the advisor only **reads** the ledger; **filing** an observation is a separate,
   deliberate act — a dedicated `observe` command, or a monitoring adapter dropping
   the same shape. Filing and running are different verbs and do not share a command.
   The ingestion fabric itself is deferred.
 - The brief instructs the agent to open ADR-0001 with the genesis strategy and add a
   record per significant decision thereafter.
-- The trust thesis and the changeset/charter core are unchanged. Only the
+- The trust thesis and the changeset/clearance core are unchanged. Only the
   representation of inputs and reasoning moves to ledgers; authority remains solely
   in the envelope.

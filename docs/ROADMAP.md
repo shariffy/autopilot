@@ -1,6 +1,6 @@
 # Roadmap
 
-This is the ordered backlog for Charter. It exists because the direction is real
+This is the ordered backlog for Autopilot. It exists because the direction is real
 but scattered: the honest edge of the system lives in the [threat model](THREAT_MODEL.md)
 as residuals **R1–R9**, and the architectural follow-ons live in the [ADRs](adr).
 This document does not invent new work — it *sequences* what those two already
@@ -16,13 +16,13 @@ a thing is safe without a test that fails when it isn't is not a discharge.
 
 The trust boundary and its two enaction paths — the in-memory `Harness::enact` and
 the real git-backed `begin → stage → commit` — are built and unit-tested (the pure
-kernel: `reach`, `policy`, the outcome gate). The conductor runs on the Claude Agent
+kernel: `reach`, `policy`, the outcome gate). The advisor runs on the Claude Agent
 SDK with its only write channel being the `envelope` binary. The observation ledger
 is seeded for the first real task (a small admin web app; a predecessor deployment
 already exists).
 
 What has **not** happened: the system has never run a genesis loop to a committed
-outcome. A project created with `charter init` has no established workspace yet,
+outcome. A project created with `autopilot init` has no established workspace yet,
 and its audit journal holds only rejected dry-run probes. Everything below is
 ordered around closing that gap first, then hardening the pieces the first real
 run will lean on.
@@ -53,15 +53,15 @@ brain → envelope → green-build → committed-outcome path has never run to c
 Until it does, every claim about the system is a claim about code that has not been
 exercised together. This milestone is not a feature; it is turning the key.
 
-**What lands.** A real run of the conductor against the seeded observations: the
-agent reads the predecessor deployment, chooses its own strategy (per [ADR 0005](adr/0005-changesets-charters-and-observation-driven-genesis.md)
+**What lands.** A real run of the advisor against the seeded observations: the
+agent reads the predecessor deployment, chooses its own strategy (per [ADR 0005](adr/0005-changesets-clearances-and-observation-driven-genesis.md)
 §3 the choice is the agent's, and "do little" is a legitimate outcome), and — if it
 elects to build — lands **one** green, atomic, reach-bounded genesis changeset into a
 new outcome (the project's `workspace/`), opening `docs/adr/0001` in the outcome
 with its strategy per [ADR 0006](adr/0006-inputs-and-decisions-as-append-only-ledgers.md)
 §3.
 
-**Where it lives.** `conductor/` (the run), the new outcome repo (external, not
+**Where it lives.** `advisor/` (the run), the new outcome repo (external, not
 vendored), and the project's audit journal (which should gain its first
 `establish` / `stage` / `commit` records instead of only dry-run rejections).
 
@@ -97,16 +97,16 @@ change fails closed and reverts.
 **Why.** `worktree::adjudicate_write` and the changeset lifecycle — the code M1
 actually runs — are verified today only by a manual smoke run, because they need
 `git` and `npm`. The pure kernel they reuse is unit-tested; the I/O orchestration
-around it is not. [R9](THREAT_MODEL.md) is this gap. The conductor has no tests at
+around it is not. [R9](THREAT_MODEL.md) is this gap. The advisor has no tests at
 all (CI runs only `tsc --noEmit`).
 
 **What lands.** Automated coverage of the real path — begin/stage/commit,
 commit-on-green, reset-on-red, package-manager detection, and the establish modes —
 against a throwaway git fixture, wired into CI (which already runs `cargo test`).
-A first test around the conductor's envelope seam.
+A first test around the advisor's envelope seam.
 
 **Where it lives.** `envelope/` tests exercising `worktree.rs`; a test surface for
-`conductor/` and a `test` script in `conductor/package.json`; `.github/workflows/ci.yml`.
+`advisor/` and a `test` script in `advisor/package.json`; `.github/workflows/ci.yml`.
 
 **Exit criterion.** R9 moves to Threats: the real adjudication path is covered by
 `cargo test` (green build commits, red build reverts, reach is enforced per stage),
@@ -140,13 +140,13 @@ honest about being outcome-agnostic.
   build does on the host. The build *definition* is already protected (it's outside
   the write allowlist), but a written source the build imports could run at build
   time. The build needs a sandboxed, network-isolated, pinned-toolchain environment.
-- **[R3](THREAT_MODEL.md)** — the process seam exists (the conductor's only write
+- **[R3](THREAT_MODEL.md)** — the process seam exists (the advisor's only write
   channel is the `envelope` binary), but it is not authenticated. Trust derives from
   the local process boundary, not a versioned, authenticated wire (assumption **A4**).
   A network-deployed agent needs that wire.
 
 **Where it lives.** The verifier's execution environment in `envelope/` (sandbox);
-the conductor↔envelope invocation and a versioned protocol per [ADR 0002](adr/0002-language-for-the-trusted-core.md) (seam).
+the advisor↔envelope invocation and a versioned protocol per [ADR 0002](adr/0002-language-for-the-trusted-core.md) (seam).
 
 **Exit criterion.** R8 and R3 move to Threats: the build runs in an isolated
 environment (a build-time side effect cannot touch the host or network), and the

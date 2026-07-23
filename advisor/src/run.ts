@@ -1,10 +1,10 @@
-// `charter run` — the untrusted brain builds and maintains the project's outcome
+// `autopilot run` — the untrusted brain builds and maintains the project's outcome
 // under the envelope.
 //
 // The only input is the project's observation ledger — a directory of numbered,
 // immutable records (observations/NNNN-*.md), mirroring docs/adr/. Running READS
 // the ledger and acts on it; it never writes to it. Filing an observation is its
-// own act (a reviewable ledger write) — `charter observe`, or drop a record
+// own act (a reviewable ledger write) — `autopilot observe`, or drop a record
 // directly. See docs/adr/0006.
 //
 // The project is where the command is run (docs/adr/0007); everything
@@ -21,7 +21,7 @@ import { readObservations, renderObservations } from './observations.js'
 import { currentProject } from './project.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-// conductor/src -> conductor -> the system repo root (which holds envelope/ and conductor/)
+// advisor/src -> advisor -> the system repo root (which holds envelope/ and advisor/)
 const systemRoot = path.resolve(here, '..', '..')
 
 function envPath(name: string, fallback: string): string {
@@ -46,7 +46,7 @@ export async function run(argv: string[]): Promise<void> {
     repo: project.workspace,
     sources: project.sources,
     envelopeBin: envPath('ENVELOPE_BIN', path.join(systemRoot, 'envelope', 'target', 'debug', 'envelope')),
-    charter: project.charter,
+    clearance: project.clearance,
     auditPath: project.auditPath,
   }
   const observationsDir = project.observationsDir
@@ -64,7 +64,7 @@ export async function run(argv: string[]): Promise<void> {
   console.error(`workspace  ${ctx.repo}`)
   console.error(`ledger     ${observationsDir}`)
   console.error(`sources    ${sourceNames.length ? sourceNames.map((n) => `${n} -> ${ctx.sources[n]}`).join(', ') : '(none)'}`)
-  console.error(`charter    ${ctx.charter}`)
+  console.error(`clearance  ${ctx.clearance}`)
   console.error(`envelope   ${ctx.envelopeBin}`)
   console.error(`audit      ${ctx.auditPath}`)
 
@@ -77,7 +77,7 @@ export async function run(argv: string[]): Promise<void> {
       bin: ctx.envelopeBin,
       repo: ctx.repo,
       path: 'secrets/__envelope_probe__.ts',
-      charter: ctx.charter,
+      clearance: ctx.clearance,
       content: '// probe',
     })
     console.error(describeVerdict(verdict))
@@ -87,11 +87,11 @@ export async function run(argv: string[]): Promise<void> {
   }
 
   // Running only reads the ledger — filing is a separate, deliberate act
-  // (`charter observe`, or drop a record). The ledger stays the single, durable ask.
+  // (`autopilot observe`, or drop a record). The ledger stays the single, durable ask.
   const observations = await readObservations(observationsDir)
   if (observations.length === 0) {
     console.error(`\nno observations to act on. file one first:`)
-    console.error(`  charter observe "…a need…"   (or add a record to ${observationsDir})`)
+    console.error(`  autopilot observe "…a need…"   (or add a record to ${observationsDir})`)
     process.exit(2)
   }
 

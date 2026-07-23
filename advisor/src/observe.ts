@@ -1,11 +1,11 @@
-// `charter observe` — file one observation into the project's ledger, then exit.
+// `autopilot observe` — file one observation into the project's ledger, then exit.
 //
 // Filing is a deliberate, reviewable ledger write — kept separate from running the
-// agent (`charter run`), which only reads. A human files with this; a monitoring
+// agent (`autopilot run`), which only reads. A human files with this; a monitoring
 // adapter would drop the same shape directly. See docs/adr/0006.
 //
-//   charter observe "support reports bulk user export is missing"
-//   charter observe --source cloudwatch "error rate on /users spiked to 12%"
+//   autopilot observe "support reports bulk user export is missing"
+//   autopilot observe --source cloudwatch "error rate on /users spiked to 12%"
 //
 // The project is where the command is run (docs/adr/0007).
 
@@ -25,7 +25,7 @@ export async function observe(argv: string[]): Promise<void> {
 
   const body = rest.join(' ').trim()
   if (!body) {
-    console.error('usage: charter observe [--source <name>] "what was noticed or wanted"')
+    console.error('usage: autopilot observe [--source <name>] "what was noticed or wanted"')
     process.exit(2)
   }
 

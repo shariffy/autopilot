@@ -4,7 +4,7 @@
 // verifying-and-committing a changeset — crosses this boundary by shelling out to
 // the `envelope` binary. This module cannot widen what the envelope allows; it can
 // only ask, and report back the verdict the envelope returned. Reach is decided by
-// the envelope under the charter the caller names; verification is the outcome's
+// the envelope under the clearance the caller names; verification is the outcome's
 // own build, run inside the envelope. The brain supplies none of what it is judged
 // by.
 
@@ -23,8 +23,8 @@ export type Verdict =
   | { outcome: 'reset' }
   | { outcome: 'error'; reason: string }
 
-/** The reach charter, chosen by lifecycle stage — never by the brain. */
-export type Charter = 'genesis' | 'maintenance'
+/** The reach clearance, chosen by lifecycle stage — never by the brain. */
+export type Clearance = 'genesis' | 'maintenance'
 
 /** Run the envelope binary with args and optional stdin; resolve its verdict. */
 function runEnvelope(bin: string, args: string[], stdin?: string): Promise<Verdict> {
@@ -71,17 +71,17 @@ export function establishWorkspace(opts: {
   return runEnvelope(opts.bin, args)
 }
 
-/** Stage one proposed write into the open changeset, under the named charter. */
+/** Stage one proposed write into the open changeset, under the named clearance. */
 export function stageWrite(opts: {
   bin: string
   repo: string
   path: string
-  charter: Charter
+  clearance: Clearance
   content: string
 }): Promise<Verdict> {
   return runEnvelope(
     opts.bin,
-    ['stage', '--repo', opts.repo, '--path', opts.path, '--charter', opts.charter],
+    ['stage', '--repo', opts.repo, '--path', opts.path, '--clearance', opts.clearance],
     opts.content,
   )
 }

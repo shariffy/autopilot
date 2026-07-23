@@ -18,7 +18,7 @@ mod verifier;
 mod worktree;
 
 use harness::Harness;
-use invariants::reach::Charter;
+use invariants::reach::Clearance;
 use telemetry::StubTelemetry;
 use types::{Action, Outcome, Verdict, Verification};
 use verifier::StubVerifier;
@@ -229,23 +229,25 @@ fn cmd_begin(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Stage one write into the open changeset, under the reach charter in force. The
-/// charter is chosen by lifecycle stage (Genesis vs Maintenance), supplied by the
-/// caller — never by the agent, whose write is what is being judged here.
+/// Stage one write into the open changeset, under the reach clearance in force.
+/// The clearance is chosen by lifecycle stage (Genesis vs Maintenance), supplied
+/// by the caller — never by the agent, whose write is what is being judged here.
 fn cmd_stage(args: &[String]) -> ExitCode {
     let mut flags = Flags::default();
     if let Err(code) = flags.parse(args) {
         return code;
     }
     let (Some(repo_raw), Some(path)) = (flags.repo, flags.path) else {
-        emit_error("usage: envelope stage --repo <dir> --path <repo-relative> --charter <genesis|maintenance>  (file body on stdin)");
+        emit_error("usage: envelope stage --repo <dir> --path <repo-relative> --clearance <genesis|maintenance>  (file body on stdin)");
         return ExitCode::from(2);
     };
-    let charter = match flags.charter.as_deref() {
-        Some("genesis") => Charter::Genesis,
-        Some("maintenance") | None => Charter::Maintenance,
+    let clearance = match flags.clearance.as_deref() {
+        Some("genesis") => Clearance::Genesis,
+        Some("maintenance") | None => Clearance::Maintenance,
         Some(other) => {
-            emit_error(&format!("unknown charter `{other}` (genesis|maintenance)"));
+            emit_error(&format!(
+                "unknown clearance `{other}` (genesis|maintenance)"
+            ));
             return ExitCode::from(2);
         }
     };
@@ -262,7 +264,7 @@ fn cmd_stage(args: &[String]) -> ExitCode {
         path: path.clone(),
         bytes: content.len(),
     };
-    if let Verdict::Deny(violations) = policy::Policy::for_charter(charter).evaluate(&action) {
+    if let Verdict::Deny(violations) = policy::Policy::for_clearance(clearance).evaluate(&action) {
         let pairs: Vec<(&'static str, String)> = violations
             .into_iter()
             .map(|v| (v.invariant, v.reason))
@@ -375,7 +377,7 @@ struct Flags {
     repo: Option<String>,
     path: Option<String>,
     intent: Option<String>,
-    charter: Option<String>,
+    clearance: Option<String>,
     mode: Option<String>,
     source: Option<String>,
 }
@@ -388,7 +390,7 @@ impl Flags {
                 "--repo" => self.repo = args.get(i + 1).cloned(),
                 "--path" => self.path = args.get(i + 1).cloned(),
                 "--intent" => self.intent = args.get(i + 1).cloned(),
-                "--charter" => self.charter = args.get(i + 1).cloned(),
+                "--clearance" => self.clearance = args.get(i + 1).cloned(),
                 "--mode" => self.mode = args.get(i + 1).cloned(),
                 "--source" => self.source = args.get(i + 1).cloned(),
                 other => {

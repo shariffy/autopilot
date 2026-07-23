@@ -1,24 +1,24 @@
 // The project: the unit of oversight. One system oversees any number of projects;
 // everything that belongs to ONE overseen project — what to build, what it may
-// observe, which charter is in force, its observation ledger, its change journal —
+// observe, which clearance is in force, its observation ledger, its change journal —
 // lives together in one project directory, external to the system repo. The system
 // repo records the system; a project home records one deployment of it.
 //
-// The system is operated from inside the project, like git: `charter init` makes a
+// The system is operated from inside the project, like git: `autopilot init` makes a
 // directory a project, and every command resolves the project from where it is run
 // — the nearest ancestor holding project.json. There is no other selector, so an
 // incoherent mixture of two projects is not expressible. See docs/adr/0007.
 //
 // A project directory holds:
-//   project.json             what to build, from what, under which charter
+//   project.json             what to build, from what, under which clearance
 //   observations/NNNN-*.md   the observation ledger (docs/adr/0006)
-//   conductor-audit.jsonl    the brain's change journal
+//   advisor-audit.jsonl    the brain's change journal
 //   workspace/               the outcome, by default — the one agent-writable area
 
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import type { Charter } from './envelope.js'
+import type { Clearance } from './envelope.js'
 
 // Relative paths in project.json resolve against the project directory, so a
 // project home is relocatable as a unit.
@@ -27,8 +27,8 @@ const ProjectFile = z.object({
   workspace: z.string(),
   /** Named read-only sources the brain may observe; empty = pure greenfield. */
   sources: z.record(z.string(), z.string()).default({}),
-  /** Reach charter in force — lifecycle state, flipped by the operator, never the brain. */
-  charter: z.enum(['genesis', 'maintenance']).default('genesis'),
+  /** Reach clearance in force — lifecycle state, flipped by the operator, never the brain. */
+  clearance: z.enum(['genesis', 'maintenance']).default('genesis'),
 })
 
 export interface Project {
@@ -36,7 +36,7 @@ export interface Project {
   dir: string
   workspace: string
   sources: Record<string, string>
-  charter: Charter
+  clearance: Clearance
   observationsDir: string
   auditPath: string
 }
@@ -62,7 +62,7 @@ export async function currentProject(): Promise<Project> {
   if (!dir) {
     throw new Error(
       `not inside a project — no project.json here or in any parent directory.\n` +
-        `run \`charter init\` in the directory that should hold the project.`,
+        `run \`autopilot init\` in the directory that should hold the project.`,
     )
   }
   return loadProject(dir)
@@ -76,9 +76,9 @@ export async function loadProject(dir: string): Promise<Project> {
     dir,
     workspace: resolve(parsed.workspace),
     sources: Object.fromEntries(Object.entries(parsed.sources).map(([n, p]) => [n, resolve(p)])),
-    charter: parsed.charter,
+    clearance: parsed.clearance,
     observationsDir: path.join(dir, 'observations'),
-    auditPath: path.join(dir, 'conductor-audit.jsonl'),
+    auditPath: path.join(dir, 'advisor-audit.jsonl'),
   }
 }
 
@@ -86,7 +86,7 @@ export async function loadProject(dir: string): Promise<Project> {
  * Make the current directory a project. The workspace defaults to ./workspace —
  * inside the project home, but the config and ledgers stay OUTSIDE the workspace,
  * because the workspace is the one area the brain may write: the brain must never
- * be able to edit its own charter or ledger.
+ * be able to edit its own clearance or ledger.
  */
 export async function init(): Promise<void> {
   const dir = process.cwd()
@@ -94,7 +94,7 @@ export async function init(): Promise<void> {
   const scaffold = {
     workspace: './workspace',
     sources: {},
-    charter: 'genesis',
+    clearance: 'genesis',
   }
   try {
     await writeFile(file, `${JSON.stringify(scaffold, null, 2)}\n`, { flag: 'wx' })
@@ -111,10 +111,10 @@ project.json:
   workspace   where the outcome is established and built (default ./workspace)
   sources     named read-only roots the brain may observe, e.g.
               { "predecessor": "../the-old-app" } — empty means pure greenfield
-  charter     "genesis" now; flip to "maintenance" once the outcome exists
+  clearance   "genesis" now; flip to "maintenance" once the outcome exists
 
 next:
-  charter observe "…what is noticed or wanted…"   # file the first observation
-  charter run --dry-run                            # prove the seam (mutates nothing)
-  charter run                                      # act on the ledger`)
+  autopilot observe "…what is noticed or wanted…"   # file the first observation
+  autopilot run --dry-run                            # prove the seam (mutates nothing)
+  autopilot run                                      # act on the ledger`)
 }

@@ -43,7 +43,7 @@ echo "<file contents>" | cargo run -- adjudicate \
 git: the tree must be clean, the change is committed on a green build or restored
 on a red one. Verification is the repository's own `npm run build` — run *inside*
 the envelope, so the proposer still cannot supply what it is judged by. This is
-the channel the [conductor](../conductor) (the untrusted Claude-driven brain)
+the channel the [advisor](../advisor) (the untrusted Claude-driven brain)
 drives; it is the only way the brain can change a file.
 
 ## What you'll see
@@ -110,7 +110,7 @@ src/
   main.rs           wires it together; runs the showcase, or `adjudicate` for real
 ```
 
-The real untrusted agent lives in a separate project — [conductor](../conductor),
+The real untrusted agent lives in a separate project — [advisor](../advisor),
 a Claude-driven loop — and reaches the world only through `envelope adjudicate`.
 
 ## Documentation
@@ -127,7 +127,7 @@ real. The known gaps are tracked honestly as residuals in the
 [threat model](../docs/THREAT_MODEL.md).
 
 The structural keystone — putting the agent across a process seam, with the real
-gate on the trusted side — is now built: the [conductor](../conductor) is a real
+gate on the trusted side — is now built: the [advisor](../advisor) is a real
 Claude-driven agent that can only change the app through `envelope adjudicate`,
 and verification is the app's real build. The remaining load-bearing residual for
 a frontend is agentic **UI** verification (does the rendered page actually work),

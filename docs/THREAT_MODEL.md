@@ -31,7 +31,7 @@ construction.
 
 | Actor | Trust | Role |
 |---|---|---|
-| **Agent** | **Untrusted** | Proposes actions. Assumed adversarial: may lie, escalate, or try to bypass. In production this is the [conductor](../../conductor), a Claude-driven process. |
+| **Agent** | **Untrusted** | Proposes actions. Assumed adversarial: may lie, escalate, or try to bypass. In production this is the [advisor](../../advisor), a Claude-driven process. |
 | **Reference monitor** (`harness`, `policy`, `invariants`, `guardrails`, `reversible`, `worktree`) | **Trusted (the TCB)** | The single chokepoint. Small and auditable on purpose. |
 | **Telemetry** (`telemetry::Telemetry`) | **Trusted** | The source of truth for production health. The agent has no handle to it. |
 | **Verifier** (`worktree::BuildVerifier` — the repo's own build) | **Trusted** | Decides "fit to ship"; runs inside the monitor, not the agent. |
@@ -90,10 +90,10 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
   the core into its own crate or process — deliberately not done, to keep the TCB
   a single small crate.
 - **R3 — Process seam exists; authentication does not (partially discharges A4).**
-  The real agent (the conductor) is now a separate process, and its only write
+  The real agent (the advisor) is now a separate process, and its only write
   channel is invoking the `envelope adjudicate` binary — it cannot reach the
   world any other way. What is *not* built is authentication of that seam: trust
-  currently derives from the local process boundary (whoever runs the conductor
+  currently derives from the local process boundary (whoever runs the advisor
   controls the local exec), not from a versioned, authenticated wire protocol (see
   ADR 0002). A network-deployed agent would need that.
 - **R4 — Global guardrails only.** SLOs are uniform across services; per-service or

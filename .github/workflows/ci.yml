@@ -39,19 +39,19 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: envelope
 
-  # The untrusted brain (TypeScript). Lives in conductor/.
+  # The untrusted brain (TypeScript). Lives in advisor/.
   brain:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: conductor
+        working-directory: advisor
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: conductor/package-lock.json
+          cache-dependency-path: advisor/package-lock.json
       - name: install
         run: npm ci
       - name: typecheck

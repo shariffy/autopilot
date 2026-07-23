@@ -1,5 +1,5 @@
-// The `charter` command. The system is operated from inside a project directory,
-// like git: `charter init` makes the current directory a project, and every other
+// The `autopilot` command. The system is operated from inside a project directory,
+// like git: `autopilot init` makes the current directory a project, and every other
 // command resolves the project from where it is run — the nearest ancestor holding
 // project.json. See docs/adr/0007.
 
@@ -7,11 +7,11 @@ import { init } from './project.js'
 import { observe } from './observe.js'
 import { run } from './run.js'
 
-const USAGE = `usage: charter <command>
+const USAGE = `usage: autopilot <command>
 
-  charter init                                  make the current directory a project
-  charter observe [--source <name>] "…need…"    file an observation into the ledger
-  charter run [--dry-run]                       act on the observation ledger
+  autopilot init                                  make the current directory a project
+  autopilot observe [--source <name>] "…need…"    file an observation into the ledger
+  autopilot run [--dry-run]                       act on the observation ledger
 
 commands run against the project you are standing in (the nearest ancestor
 directory holding project.json).`
@@ -32,7 +32,7 @@ async function main() {
       process.exit(cmd ? 0 : 2)
       break
     default:
-      console.error(`charter: unknown command "${cmd}"\n\n${USAGE}`)
+      console.error(`autopilot: unknown command "${cmd}"\n\n${USAGE}`)
       process.exit(2)
   }
 }

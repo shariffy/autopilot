@@ -1,13 +1,13 @@
 //! Reach invariant: *where* the agent may write.
 //!
-//! Reach is not a single global list — it is a **charter**, and which charter is
-//! in force is decided by the outcome's *lifecycle stage*, never by the agent (see
-//! ADR 0005):
+//! Reach is not a single global list — it is a **clearance**, and which
+//! clearance is in force is decided by the outcome's *lifecycle stage*, never by
+//! the agent (see ADR 0005):
 //!
-//! - [`Charter::Maintenance`] — a governed app has launched. Reach is the narrow,
+//! - [`Clearance::Maintenance`] — a governed app has launched. Reach is the narrow,
 //!   human-auditable allowlist below; the API contract, secrets, and infra are
 //!   frozen. This is the stage the structural-trust thesis is about.
-//! - [`Charter::Genesis`] — establishment, before launch. The agent is bringing an
+//! - [`Clearance::Genesis`] — establishment, before launch. The agent is bringing an
 //!   app into existence (or doing structural surgery on adopted code), so it must
 //!   be able to write config, the API client, and auth. Reach is the whole
 //!   workspace *except* the two zones that are never the agent's to touch:
@@ -21,16 +21,16 @@
 
 use crate::types::{Action, Violation};
 
-/// The reach charter in force over an outcome, selected by lifecycle stage.
+/// The reach clearance in force over an outcome, selected by lifecycle stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Charter {
+pub enum Clearance {
     /// Establishment, pre-launch: the whole workspace minus the never-touch zones.
     Genesis,
     /// Post-launch maintenance: the narrow fitted allowlist.
     Maintenance,
 }
 
-/// Path prefixes the agent may write under the Maintenance charter. Anything not
+/// Path prefixes the agent may write under the Maintenance clearance. Anything not
 /// matching is refused by default (deny-by-default).
 const ALLOWED_WRITE_PREFIXES: &[&str] = &[
     "src/components/",
@@ -50,15 +50,15 @@ const FORBIDDEN_WRITE_PREFIXES: &[&str] = &[
     "envelope/", // the trusted core may not be edited by the agent it governs
 ];
 
-/// Zones that are never the agent's to touch under *any* charter — even the broad
-/// Genesis charter is confined to the workspace minus these.
+/// Zones that are never the agent's to touch under *any* clearance — even the broad
+/// Genesis clearance is confined to the workspace minus these.
 const NEVER_WRITE_PREFIXES: &[&str] = &[
     "secrets/", // credentials
     ".git/",    // the version history that makes reversibility well-defined
 ];
 
-impl Charter {
-    /// Find any reach violations this charter raises for `action`. Pure: no I/O.
+impl Clearance {
+    /// Find any reach violations this clearance raises for `action`. Pure: no I/O.
     pub fn check(self, action: &Action) -> Vec<Violation> {
         let path = match action {
             Action::WriteFile { path, .. } => path,
@@ -73,8 +73,8 @@ impl Charter {
         };
 
         match self {
-            Charter::Genesis => self.check_genesis(path, &normalized),
-            Charter::Maintenance => self.check_maintenance(path, &normalized),
+            Clearance::Genesis => self.check_genesis(path, &normalized),
+            Clearance::Maintenance => self.check_maintenance(path, &normalized),
         }
     }
 
@@ -136,14 +136,14 @@ mod tests {
     use crate::types::Action;
 
     fn maintenance(path: &str) -> Vec<Violation> {
-        Charter::Maintenance.check(&Action::WriteFile {
+        Clearance::Maintenance.check(&Action::WriteFile {
             path: path.to_string(),
             bytes: 1,
         })
     }
 
     fn genesis(path: &str) -> Vec<Violation> {
-        Charter::Genesis.check(&Action::WriteFile {
+        Clearance::Genesis.check(&Action::WriteFile {
             path: path.to_string(),
             bytes: 1,
         })
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn genesis_still_forbids_never_zones() {
-        // Even the broad charter never writes credentials or rewrites history.
+        // Even the broad clearance never writes credentials or rewrites history.
         assert!(!genesis("secrets/tokens.ts").is_empty());
         assert!(!genesis(".git/config").is_empty());
     }
@@ -210,8 +210,8 @@ mod tests {
 
     /// Exhaustive check over every path up to length 4 built from a small alphabet
     /// that mixes `.`/`..` with allowed and forbidden segments: under *each*
-    /// charter, every *accepted* path, once normalised, must stay within that
-    /// charter's permitted region and never inside its forbidden zones.
+    /// clearance, every *accepted* path, once normalised, must stay within that
+    /// clearance's permitted region and never inside its forbidden zones.
     #[test]
     fn accepted_paths_never_resolve_into_forbidden_zones() {
         const TOKENS: &[&str] = &[

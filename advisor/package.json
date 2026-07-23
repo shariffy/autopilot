@@ -1,11 +1,11 @@
 {
-  "name": "conductor",
+  "name": "advisor",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The untrusted brain: a Claude-driven loop that maintains a project's outcome, governed by the envelope trust boundary.",
+  "description": "Autopilot's untrusted advisory brain: a Claude-driven loop that proposes changes to a project's outcome. It proposes; the envelope disposes.",
   "bin": {
-    "charter": "bin/charter.js"
+    "autopilot": "bin/autopilot.js"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

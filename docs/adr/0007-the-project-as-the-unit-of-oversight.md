@@ -14,7 +14,7 @@ inputs: an observation ledger, and named read-only sources configured by the
 operator.
 
 But the state that binds these together for one overseen project had no home. The
-workspace path, the sources, the charter in force, the observation ledger, and the
+workspace path, the sources, the clearance in force, the observation ledger, and the
 change journal were five independent environment settings, each with a default
 that pointed at one hard-coded deployment — the ledger's default even lived inside
 the system checkout. Three consequences:
@@ -25,7 +25,7 @@ the system checkout. Three consequences:
 
 2. **Incoherent combinations were expressible.** Nothing grouped the five
    settings, so one project's ledger could silently run against another project's
-   workspace under the wrong charter. The operator's discipline was the only
+   workspace under the wrong clearance. The operator's discipline was the only
    defence, on exactly the axis — which project am I acting on? — where a mistake
    means acting on the wrong system.
 
@@ -35,7 +35,7 @@ the system checkout. Three consequences:
    one shell and forgotten, acting at a distance.
 
 The same reasoning that made the outcome external applies to all of this state: it
-describes a *deployment* of Charter, not Charter itself. This repository should
+describes a *deployment* of Autopilot, not Autopilot itself. This repository should
 carry decisions that hold for any deployment (its ADRs) and nothing that holds
 for only one.
 
@@ -52,7 +52,7 @@ in the tool's own source.
 
 A **project** is one outcome together with everything the system needs to oversee
 it: the workspace to establish and build, the read-only sources it may observe,
-the reach charter in force, its observation ledger, and its change journal. One
+the reach clearance in force, its observation ledger, and its change journal. One
 system oversees any number of projects; the system itself contains none of them.
 
 ### 2. A project is one external directory
@@ -62,26 +62,26 @@ external to the system repo, the same status ADR 0003 gives the outcome:
 
 ```
 <project>/
-  project.json             what to build, from what, under which charter
+  project.json             what to build, from what, under which clearance
   observations/NNNN-*.md   the observation ledger (ADR 0006 — form unchanged)
-  conductor-audit.jsonl    the brain's change journal
+  advisor-audit.jsonl      the brain's change journal
   workspace/               the outcome, by default — the one agent-writable area
 ```
 
 Relative paths in `project.json` resolve against the project home, so a project is
-relocatable as a unit. The charter is recorded here because it is lifecycle state
+relocatable as a unit. The clearance is recorded here because it is lifecycle state
 *of the project* — flipped from `genesis` to `maintenance` by the operator when
 the project crosses that line, never by the brain.
 
 ### 3. The system is operated from within the project, like git
 
-The conductor's entry point is a `charter` command with three verbs (filing and
+The advisor's entry point is an `autopilot` command with three verbs (filing and
 running remain different acts — ADR 0006 §3):
 
-- `charter init` makes the **current directory** a project: it scaffolds
+- `autopilot init` makes the **current directory** a project: it scaffolds
   `project.json` and the empty ledger, and refuses if one already exists. Creating
   a project is now a command, not documentation against a schema in source.
-- `charter observe` and `charter run` resolve their project as the **nearest
+- `autopilot observe` and `autopilot run` resolve their project as the **nearest
   ancestor directory holding `project.json`** — run from inside the project home,
   its ledger, or its workspace.
 
@@ -99,7 +99,7 @@ one directory holds the config, the ledgers, and the outcome. The nesting is
 deliberate in one direction only. The workspace may live inside the project home,
 but the config and ledgers must never live inside the workspace — the workspace is
 the one region the brain may write, and the brain must not be able to edit its own
-charter, sources, or ledger. The outcome remains external to the *system* repo
+clearance, sources, or ledger. The outcome remains external to the *system* repo
 (ADR 0003); a project home is not the system.
 
 ### 5. The system repo holds no project state
@@ -110,15 +110,15 @@ project; a fresh clone oversees whatever projects it is pointed at.
 
 ## Consequences
 
-- The conductor gains a project loader (`conductor/src/project.ts`), a `cli.ts`,
-  and a `charter` bin (tsx-run, no build step; `npm link` once to put it on PATH).
+- The advisor gains a project loader (`advisor/src/project.ts`), a `cli.ts`,
+  and an `autopilot` bin (tsx-run, no build step; `npm link` once to put it on PATH).
   `main.ts` becomes the `run` command; the per-setting environment variables
-  (`WORKSPACE`, `OBSERVATIONS`, `OBSERVE_SOURCES`, `CHARTER`, `CONDUCTOR_AUDIT`)
+  (`WORKSPACE`, `OBSERVATIONS`, `OBSERVE_SOURCES`, `CLEARANCE`, `ADVISOR_AUDIT`)
   and the `start`/`observe` npm scripts are gone, and the ledger and journal
-  directories leave the conductor.
-- The last deployment-specific defaults leave the conductor's source; what each
+  directories leave the advisor.
+- The last deployment-specific defaults leave the advisor's source; what each
   project builds is entirely data in its project home. No deployment-specific path
-  remains in the conductor's source.
+  remains in the advisor's source.
 - Overseeing a second project is creating a second directory and standing in it —
   no second checkout, no environment juggling, one shared envelope build.
 - A monitoring adapter files observations the same way anything else does: by
@@ -129,4 +129,4 @@ project; a fresh clone oversees whatever projects it is pointed at.
   way, and none of it enters the system repo.
 - The trust thesis is untouched: where a command is invoked from selects *which*
   project steers the brain, and observations still only steer (ADR 0006 §2); every
-  write is still adjudicated by the envelope under the project's charter.
+  write is still adjudicated by the envelope under the project's clearance.

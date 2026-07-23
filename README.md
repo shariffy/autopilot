@@ -1,24 +1,25 @@
-# Charter
+# Autopilot
 
-**A system that builds an outcome** — and trusts the autonomous agent that builds
-it *by construction*, not by hoping it behaves.
+**Autopilot for your codebase** — it acts only within limits it can't change,
+every change verified and reversible, and you can take the controls anytime.
 
-Charter autonomously maintains a software **outcome**: an untrusted frontier model
-proposes changes; a small trusted core decides their fate. The name is the thesis —
-the agent is *chartered*, free to act and produce an outcome within fixed limits it
-cannot change, with every action verified and reversible. Nothing the system does
-depends on the model behaving well.
+Autopilot autonomously maintains a software **outcome**: an untrusted frontier
+model proposes changes; a small trusted core decides their fate. The name is the
+thesis, read the way you'd read it on a plane — automation that flies routine work
+for you, inside hard limits it cannot exceed, with a human who can take the
+controls at any moment. Nothing the system does depends on the model behaving
+well. The mnemonic: **the advisor proposes; the envelope disposes.**
 
 It has two parts, and the outcome is deliberately **not** one of them:
 
 | Part | Trust | What it is |
 |---|---|---|
-| [`envelope/`](envelope) | **trusted** | The reference monitor (Rust, zero-dependency). Decides every change: a deny-by-default reach allowlist, git-backed reversibility, and verification by the outcome's own build. Commits on green, reverts on red. |
-| [`conductor/`](conductor) | **untrusted** | The brain (TypeScript). A Claude-driven loop that reads the outcome and proposes writes. Its only channel to the world is asking the envelope. |
+| [`envelope/`](envelope) | **trusted** | The reference monitor (Rust, zero-dependency) — flight-envelope protection. Decides every change: a deny-by-default reach allowlist, git-backed reversibility, and verification by the outcome's own build. Commits on green, reverts on red. |
+| [`advisor/`](advisor) | **untrusted** | The brain (TypeScript) — the flight director. A Claude-driven loop that reads the outcome and proposes writes. It has no authority to act; its only channel to the world is asking the envelope. |
 | the **outcome** | — | The artifact being maintained (here, a small admin web app). **External and swappable** — supplied to the system by configuration, never vendored here. |
 
 ```
-   conductor  ──propose write──▶  envelope  ──commit / revert──▶  outcome
+   advisor    ──propose write──▶  envelope  ──commit / revert──▶  outcome
   (untrusted)  ◀────verdict─────  (trusted)                      (external)
 ```
 
@@ -44,24 +45,24 @@ not a part you check out to understand it.
 # build the trusted core
 cd envelope && cargo build && cargo test
 
-# install the brain; `npm link` puts the `charter` command on your PATH
-cd ../conductor && npm install && npm link
+# install the brain; `npm link` puts the `autopilot` command on your PATH
+cd ../advisor && npm install && npm link
 
 # a project is a directory — operate from inside it, like git
 mkdir ~/my-tool && cd ~/my-tool
-charter init                                     # make this directory a project
-charter run --dry-run                            # prove the seam (mutates nothing)
-charter observe "…what is noticed or wanted…"    # file into the ledger
-charter run                                      # act on the ledger
+autopilot init                                     # make this directory a project
+autopilot run --dry-run                            # prove the seam (mutates nothing)
+autopilot observe "…what is noticed or wanted…"    # file into the ledger
+autopilot run                                      # act on the ledger
 ```
 
 A project directory holds `project.json` (the workspace to build, read-only
-sources, the charter in force), the observation ledger, and the audit journal.
-See [conductor/README](conductor/README.md).
+sources, the clearance in force), the observation ledger, and the audit journal.
+See [advisor/README](advisor/README.md).
 
 ## Documentation
 
-- [conductor/README](conductor/README.md) — the brain, the loop, what lands and what can't
+- [advisor/README](advisor/README.md) — the brain, the loop, what lands and what can't
 - [envelope/README](envelope/README.md) — the trusted core, the invariants, how the boundary holds
 - [docs/adr/](docs/adr) — architecture decisions (core name, language for the core, one-system-repo, naming the system)
 - [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) — assets, trust boundary, threats, and honest residuals

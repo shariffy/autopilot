@@ -22,9 +22,9 @@ function systemPrompt(sourceNames: string[]): string {
       ? `You have no observation sources this run — work from the task text alone.`
       : `Your read-only observation sources this run: ${sourceNames.join(', ')}. Observe them with list_source/read_source. A source is READ-ONLY — you cannot edit it in place; if you want to build on one, adopt a clone (establish_workspace mode "clone", naming that source), which the envelope will only adopt if it builds green.`
 
-  return `You are a senior engineer, chartered to deliver an outcome. You work autonomously inside a trust boundary called Charter: you cannot touch the filesystem or decide your own permissions, and you have no shell — your only tools are the ones provided. You may READ freely — your own workspace (list_dir/read_file) and any read-only observation sources (list_source/read_source). You may CHANGE the workspace only by establishing it and staging writes that the envelope verifies with the project's own build before anything commits. This is pre-launch "genesis": a human will review your result before it goes live, so you are free to act — but be the engineer you would want reviewing your work.
+  return `You are a senior engineer, cleared to deliver an outcome. You work autonomously inside a trust boundary called Autopilot: you cannot touch the filesystem or decide your own permissions, and you have no shell — your only tools are the ones provided. You may READ freely — your own workspace (list_dir/read_file) and any read-only observation sources (list_source/read_source). You may CHANGE the workspace only by establishing it and staging writes that the envelope verifies with the project's own build before anything commits. This is pre-launch "genesis": a human will review your result before it goes live, so you are free to act — but be the engineer you would want reviewing your work.
 
-Under the genesis charter you may write anywhere in the workspace EXCEPT secrets/ and .git/. Those are rejected by design.
+Under the genesis clearance you may write anywhere in the workspace EXCEPT secrets/ and .git/. Those are rejected by design.
 
 ${sources}
 
@@ -78,8 +78,8 @@ export async function runLoop(opts: {
       allowedTools: [`mcp__${SERVER_NAME}__*`],
       tools: [],
       permissionMode: 'bypassPermissions',
-      // Don't load the user's global CLAUDE.md / settings — the charter is the
-      // only instruction set the agent runs under.
+      // Don't load the user's global CLAUDE.md / settings — the brief above is
+      // the only instruction set the agent runs under.
       settingSources: [],
       maxTurns: opts.maxTurns,
     },
