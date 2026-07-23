@@ -79,6 +79,11 @@ ADR, for $0.96 over 53 turns, none of it requiring the agent to be trustworthy â
 every commit passed through the envelope's own build gate. See
 [docs/runs/0001-first-light.md](docs/runs/0001-first-light.md).
 
+The app it built is a real, separate repository â€”
+[autopilot-demo-admin-console](https://github.com/shariffy/autopilot-demo-admin-console).
+Its `git log` shows the trust boundary directly: the untrusted **advisor** as
+author, the trusted **envelope** as committer, on every change it landed.
+
 The trust boundary is real and the build is a genuine verification gate; the real
 (git-backed) adjudication path M1 exercised is now under automated test
 (`envelope/tests/worktree_lifecycle.rs`). The load-bearing remaining residual is
