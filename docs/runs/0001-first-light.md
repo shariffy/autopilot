@@ -85,6 +85,6 @@ Getting here surfaced six real defects in the envelope's changeset lifecycle —
 commit-the-adjudicated-set (a commit must equal exactly what was staged, not
 whatever `git add -A` would sweep in), stage-auto-opens-a-changeset, untracked-
 residue tolerance (the liveness fix: a real `npm install` byproduct left in the
-tree must not wedge the next changeset), and reset-on-red — now fixed on `main`
+tree must not wedge the next changeset), and baseline `.gitignore`/lockfile handling — now fixed on `main`
 and locked in by real-path integration tests
 (`envelope/tests/worktree_lifecycle.rs`, see [M3](../ROADMAP.md#m3--the-real-path-under-test-discharges-r9-done)).
