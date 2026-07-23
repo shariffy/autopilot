@@ -132,13 +132,22 @@ pub fn begin(repo: &Path) -> Disposition {
 /// responsibility (decided by the shared policy kernel before we are called); here
 /// we only apply the bytes and record the path as part of this changeset. The tree
 /// is expected to be mid-changeset (dirty), so no clean check — that was asserted
-/// at `begin`. Refuses outside an open changeset: an unopened changeset has no
-/// asserted baseline, so what a later revert would mean is undefined.
+/// at `begin`.
+///
+/// Staging with no changeset open opens one, which asserts the clean baseline
+/// exactly as `begin` does — so a caller that stages straight into a fresh tree
+/// still gets a well-defined baseline, and one that stages onto residue is still
+/// refused. `begin` stays available to open a changeset explicitly. What is never
+/// optional is the assertion itself: no changeset exists without a clean baseline
+/// behind it, so a revert is always well-defined.
 pub fn stage(repo: &Path, rel_path: &str, content: &[u8]) -> Disposition {
     if !changeset_is_open(repo) {
-        return Disposition::Refused {
-            reason: "no open changeset; `begin` first so the baseline is asserted".to_string(),
-        };
+        if let Err(reason) = ensure_clean(repo) {
+            return Disposition::Refused { reason };
+        }
+        if let Err(reason) = open_changeset(repo) {
+            return Disposition::Refused { reason };
+        }
     }
     if let Err(reason) = write_file(repo, rel_path, content) {
         return Disposition::Refused { reason };
@@ -154,13 +163,13 @@ pub fn stage(repo: &Path, rel_path: &str, content: &[u8]) -> Disposition {
 /// Close the changeset: verify the accumulated tree with the repo's own build,
 /// then commit everything atomically on green or reset to the baseline on red.
 pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Disposition {
-    if !changeset_is_open(repo) {
-        return Disposition::Refused {
-            reason: "no open changeset; `begin` first so the baseline is asserted".to_string(),
-        };
-    }
     // Nothing staged ⇒ nothing to adjudicate. Refuse rather than make an empty
     // commit, so a no-op is visible rather than silently "successful".
+    if !changeset_is_open(repo) {
+        return Disposition::Refused {
+            reason: "no staged changes to commit".to_string(),
+        };
+    }
     let staged = match staged_paths(repo) {
         Ok(paths) => paths,
         Err(reason) => return Disposition::Refused { reason },
