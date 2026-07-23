@@ -361,17 +361,31 @@ fn is_nonempty_dir(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Require a git work tree with no uncommitted changes.
+/// Require a git work tree whose *tracked* content matches `HEAD`, so the baseline
+/// a changeset reverts to is exact.
+///
+/// Untracked files are deliberately tolerated. They cannot enter a commit — `commit`
+/// adds only the paths this changeset staged — and `reset` removes them, so they
+/// threaten neither the atomicity of a changeset nor the exactness of a revert.
+/// Treating them as disqualifying instead cost liveness, and did so in the one case
+/// the agent could not escape: verification itself writes untracked build products
+/// (a lockfile, caches) into the tree, and once they were there every remedy needed
+/// a write, every write needed a clean tree, and the agent had no way to clean one.
+/// A run wedged permanently on residue the trusted core had created itself. Sound
+/// liveness here also stops correctness from resting on `.gitignore`, which is
+/// inside the agent's reach and which it will rewrite for its own stack.
 fn ensure_clean(repo: &Path) -> Result<(), String> {
     if !git(repo, &["rev-parse", "--is-inside-work-tree"]).0 {
         return Err(format!("`{}` is not a git work tree", repo.display()));
     }
-    let (ok, status) = git(repo, &["status", "--porcelain"]);
+    let (ok, status) = git(repo, &["status", "--porcelain", "--untracked-files=no"]);
     if !ok {
         return Err("could not read git status".to_string());
     }
     if !status.trim().is_empty() {
-        return Err("working tree is not clean; refusing so a revert stays well-defined".to_string());
+        return Err(
+            "tracked files differ from HEAD; refusing so a revert stays well-defined".to_string(),
+        );
     }
     Ok(())
 }
