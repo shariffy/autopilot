@@ -196,7 +196,10 @@ pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Dispositio
     // is empty: anything else in the tree (a leftover from an earlier changeset
     // whose build went red) would ride along under an intent that never covered it
     // and a verification that never judged it.
-    let message = format!("{intent}\n\n[envelope] verified by `{}`", verifier.describe(repo));
+    let message = format!(
+        "{intent}\n\n[envelope] verified by `{}`",
+        verifier.describe(repo)
+    );
     let mut add = vec!["add", "--"];
     add.extend(staged.iter().map(String::as_str));
     if !git(repo, &add).0 {
@@ -318,7 +321,8 @@ fn establish_empty(workspace: &Path) -> Disposition {
     }
     if !git(workspace, &["commit", "--quiet", "-m", "baseline"]).0 {
         return Disposition::Refused {
-            reason: "could not create the baseline commit (is git user.name/email set?)".to_string(),
+            reason: "could not create the baseline commit (is git user.name/email set?)"
+                .to_string(),
         };
     }
     Disposition::Established {
@@ -500,8 +504,6 @@ pub fn resolve_new_repo(raw: &str) -> PathBuf {
     if p.is_absolute() {
         p
     } else {
-        std::env::current_dir()
-            .map(|c| c.join(&p))
-            .unwrap_or(p)
+        std::env::current_dir().map(|c| c.join(&p)).unwrap_or(p)
     }
 }

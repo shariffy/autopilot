@@ -79,7 +79,10 @@ impl Clearance {
     }
 
     fn check_genesis(self, path: &str, normalized: &str) -> Vec<Violation> {
-        if NEVER_WRITE_PREFIXES.iter().any(|p| normalized.starts_with(p)) {
+        if NEVER_WRITE_PREFIXES
+            .iter()
+            .any(|p| normalized.starts_with(p))
+        {
             return vec![Violation {
                 invariant: "reach",
                 reason: format!("`{path}` resolves into a never-writable zone"),

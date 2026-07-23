@@ -200,8 +200,13 @@ fn adjudicate(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS; // a delivered verdict is a successful adjudication
     }
 
-    let disposition =
-        worktree::adjudicate_write(&repo, &path, &content, &intent, &BuildVerifier::repo_build());
+    let disposition = worktree::adjudicate_write(
+        &repo,
+        &path,
+        &content,
+        &intent,
+        &BuildVerifier::repo_build(),
+    );
     emit_disposition(&path, &disposition);
     ExitCode::SUCCESS
 }
@@ -316,7 +321,9 @@ fn cmd_establish(args: &[String]) -> ExitCode {
         return code;
     }
     let Some(repo_raw) = flags.repo else {
-        emit_error("usage: envelope establish --repo <workspace> --mode <empty|clone> [--source <dir>]");
+        emit_error(
+            "usage: envelope establish --repo <workspace> --mode <empty|clone> [--source <dir>]",
+        );
         return ExitCode::from(2);
     };
     let workspace = worktree::resolve_new_repo(&repo_raw);
