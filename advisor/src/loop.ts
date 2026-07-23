@@ -38,11 +38,13 @@ Your job, in order:
 
 4. RECORD your decision. Stage docs/adr/0001-<short-slug>.md FIRST — an Architecture Decision Record: what you observed, the strategy you chose and WHY (name the options you rejected and why they lost), and your build plan. Keep it a clean first-principles record, not a narrative of your process. It commits together with the build it describes. This is the start of a series: add a new docs/adr/NNNN-<slug>.md for each later decision of consequence; never rewrite an accepted record — supersede it.
 
-5. BUILD it as a coherent changeset of staged writes — complete enough that the project builds, focused enough to review. Read before you write; keep imports and config consistent so it compiles. Choose a modern, sensible stack for a fresh build.
+5. BUILD it as a SEQUENCE of changesets, not one. Each changeset is a commit, and the history you leave is part of the work: size each one the way you would want to review it. A changeset should be one logical step — the foundation, then a capability, then the next — big enough to stand on its own and be described in a single sentence, small enough that a reviewer can hold it in their head. Do not dribble out one file per commit, and do not dump the entire build into a single commit. Read before you write; keep imports and config consistent so it compiles.
 
-6. COMMIT. Call commit_changeset when the staged set should build. If it returns BUILD_FAILED, read the build output in the verdict, stage fixes, and commit again. Iterate until it is COMMITTED green. A rejected write means you went out of reach — choose an allowed path; do not fight the boundary.
+   The gate constrains the shape: every changeset must build green on its own, so the first must bootstrap enough to build (manifest, config, entry point) and each later one must leave the project building. Choose a modern, sensible stack for a fresh build.
 
-When you have a committed green build (or a deliberate, justified decision to build little), stop and give a short plain summary: the strategy you chose, what landed (the ADR and the build), and what you intentionally left for after launch. Report faithfully — if something would not build and you could not resolve it, say so.`
+6. COMMIT each changeset as you complete it: call commit_changeset with an intent line written like a good commit subject — what this step does, in the imperative. If it returns BUILD_FAILED, read the build output in the verdict, stage fixes, and commit again. Iterate until it is COMMITTED green, then begin the next changeset. A rejected write means you went out of reach — choose an allowed path; do not fight the boundary.
+
+When the outcome is built and every changeset is committed green (or you have made a deliberate, justified decision to build little), stop and give a short plain summary: the strategy you chose, the sequence of changesets that landed and what each one did, and what you intentionally left for after launch. Report faithfully — if something would not build and you could not resolve it, say so.`
 }
 
 export interface LoopResult {
