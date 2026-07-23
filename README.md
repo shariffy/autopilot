@@ -67,10 +67,20 @@ See [advisor/README](advisor/README.md).
 - [docs/adr/](docs/adr) — architecture decisions (core name, language for the core, one-system-repo, naming the system)
 - [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) — assets, trust boundary, threats, and honest residuals
 - [docs/ROADMAP.md](docs/ROADMAP.md) — the ordered backlog: the residuals and ADR follow-ons, sequenced
+- [docs/runs/](docs/runs) — write-ups of real advisor runs against real outcomes
 
 ## Status
 
-Runnable, not yet production-hardened. The trust boundary is real and the build is
-a genuine verification gate. The load-bearing remaining residual is agentic **UI**
-verification — confirming a rendered page actually works, not just that it
-compiles — tracked honestly in the [threat model](docs/THREAT_MODEL.md).
+Runnable, not yet production-hardened — and it has run. On 2026-07-23 the advisor
+took a small admin console from nothing to a working app: it read two seeded
+observations, chose its own strategy (greenfield React+Vite+TS over local
+fixtures), and landed **5 green, atomic genesis changesets** plus a self-authored
+ADR, for $0.96 over 53 turns, none of it requiring the agent to be trustworthy —
+every commit passed through the envelope's own build gate. See
+[docs/runs/0001-first-light.md](docs/runs/0001-first-light.md).
+
+The trust boundary is real and the build is a genuine verification gate; the real
+(git-backed) adjudication path M1 exercised is now under automated test
+(`envelope/tests/worktree_lifecycle.rs`). The load-bearing remaining residual is
+agentic **UI** verification — confirming a rendered page actually works, not just
+that it compiles — tracked honestly in the [threat model](docs/THREAT_MODEL.md).

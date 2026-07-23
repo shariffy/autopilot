@@ -2,7 +2,8 @@
 
 This is the ordered backlog for Autopilot. It exists because the direction is real
 but scattered: the honest edge of the system lives in the [threat model](THREAT_MODEL.md)
-as residuals **R1–R9**, and the architectural follow-ons live in the [ADRs](adr).
+as residuals **R1–R8** (R9 discharged as T10), and the architectural follow-ons
+live in the [ADRs](adr).
 This document does not invent new work — it *sequences* what those two already
 name, so an auditor can see not just what is unfinished but in what order it
 should be finished and why.
@@ -15,17 +16,17 @@ a thing is safe without a test that fails when it isn't is not a discharge.
 ## Where we are
 
 The trust boundary and its two enaction paths — the in-memory `Harness::enact` and
-the real git-backed `begin → stage → commit` — are built and unit-tested (the pure
-kernel: `reach`, `policy`, the outcome gate). The advisor runs on the Claude Agent
-SDK with its only write channel being the `envelope` binary. The observation ledger
-is seeded for the first real task (a small admin web app; a predecessor deployment
-already exists).
+the real git-backed `begin → stage → commit` — are built and tested, both the pure
+kernel (`reach`, `policy`, the outcome gate) and, as of M3, the real I/O path
+itself. The advisor runs on the Claude Agent SDK with its only write channel being
+the `envelope` binary.
 
-What has **not** happened: the system has never run a genesis loop to a committed
-outcome. A project created with `autopilot init` has no established workspace yet,
-and its audit journal holds only rejected dry-run probes. Everything below is
-ordered around closing that gap first, then hardening the pieces the first real
-run will lean on.
+**M1 has run.** On 2026-07-23 the advisor read the seeded observations for a small
+admin console, chose a greenfield React+Vite+TS strategy over local fixtures, and
+landed **5 green, atomic genesis changesets** — plus a self-authored ADR — for
+$0.96 over 53 turns. See [docs/runs/0001-first-light.md](runs/0001-first-light.md).
+Everything below was ordered around producing that run; it now hardens the pieces
+it leaned on.
 
 ## The order, and why
 
@@ -38,38 +39,43 @@ substrate (M4) and harden for a non-local deployment (M5).
 
 | # | Milestone | Discharges | Depends on |
 |---|---|---|---|
-| M1 | First light — one real genesis changeset | — (unblocks all) | nothing |
+| M1 | ✅ First light — one real genesis changeset | — (unblocks all) | nothing |
 | M2 | Agentic UI verification | **R7** | M1 |
-| M3 | The real path under test | **R9** | M1 |
+| M3 | ✅ The real path under test | **R9** | M1 |
 | M4 | Abstract the effector off git | ADR 0003 follow-on | M3 |
 | M5 | Harden the build sandbox and authenticate the seam | **R8**, **R3** | M1 |
 
 ---
 
-## M1 — First light: one real genesis changeset
+## M1 — First light: one real genesis changeset (done)
 
-**Why first.** The boundary is built and the ledger is seeded, but the end-to-end
-brain → envelope → green-build → committed-outcome path has never run to completion.
-Until it does, every claim about the system is a claim about code that has not been
-exercised together. This milestone is not a feature; it is turning the key.
+**Status: done, 2026-07-23.** The end-to-end brain → envelope → green-build →
+committed-outcome path has run to completion. See
+[docs/runs/0001-first-light.md](runs/0001-first-light.md) for the full record.
 
-**What lands.** A real run of the advisor against the seeded observations: the
-agent reads the predecessor deployment, chooses its own strategy (per [ADR 0005](adr/0005-changesets-clearances-and-observation-driven-genesis.md)
-§3 the choice is the agent's, and "do little" is a legitimate outcome), and — if it
-elects to build — lands **one** green, atomic, reach-bounded genesis changeset into a
-new outcome (the project's `workspace/`), opening `docs/adr/0001` in the outcome
-with its strategy per [ADR 0006](adr/0006-inputs-and-decisions-as-append-only-ledgers.md)
+**Why first.** The boundary was built and the ledger seeded, but that path had
+never run. Until it did, every claim about the system was a claim about code that
+had not been exercised together. This milestone was not a feature; it was turning
+the key.
+
+**What landed.** A real run of the advisor against the two seeded observations: the
+agent read them, chose its own strategy — greenfield React+Vite+TS over local JSON
+fixtures, no predecessor to adopt (per [ADR 0005](adr/0005-changesets-clearances-and-observation-driven-genesis.md)
+§3 the choice is the agent's) — and landed **five** green, atomic, reach-bounded
+genesis changesets into a new outcome (`admin-console/workspace`), opening
+`docs/adr/0001` in the outcome with its strategy per [ADR 0006](adr/0006-inputs-and-decisions-as-append-only-ledgers.md)
 §3.
 
-**Where it lives.** `advisor/` (the run), the new outcome repo (external, not
-vendored), and the project's audit journal (which should gain its first
-`establish` / `stage` / `commit` records instead of only dry-run rejections).
+**Where it lives.** `advisor/` (the run), the outcome repo (external, not
+vendored, at `admin-console/workspace`), and the project's audit journal
+(`admin-console/advisor-audit.jsonl`: 1 `establish`, 33 `stage`, 5 `commit`
+records).
 
-**Exit criterion.** A committed genesis changeset exists in the outcome, its build
-is green, and the audit ledger records the establish→stage→commit sequence that
-produced it. The run is written up (what was observed, what strategy was chosen)
-so the next person can reproduce it. This has no residual to discharge — it is the
-precondition that makes M2 and M3 testable against something real.
+**Exit criterion — met.** Five committed genesis changesets exist in the outcome,
+each build green, and the audit ledger records the establish→stage→commit
+sequence that produced them. This had no residual to discharge — it was the
+precondition that made M2 and M3 testable against something real, and M3 (below)
+is that.
 
 ## M2 — Agentic UI verification (discharges R7)
 
@@ -92,25 +98,35 @@ typecheck + tests + UI; this makes the UI half real).
 page is rejected by the verifier, demonstrated by a test in which a compiling-but-broken
 change fails closed and reverts.
 
-## M3 — The real path under test (discharges R9)
+## M3 — The real path under test (discharges R9) (done)
+
+**Status: done.** `envelope/tests/worktree_lifecycle.rs` drives the compiled
+`envelope` binary against throwaway git repos with real `git` and `npm`/`tsc`
+builds, picked up automatically by `cargo test --all-targets` in CI. R9 has moved
+from Residuals to Threats in the [threat model](THREAT_MODEL.md) as **T10**.
 
 **Why.** `worktree::adjudicate_write` and the changeset lifecycle — the code M1
-actually runs — are verified today only by a manual smoke run, because they need
-`git` and `npm`. The pure kernel they reuse is unit-tested; the I/O orchestration
-around it is not. [R9](THREAT_MODEL.md) is this gap. The advisor has no tests at
-all (CI runs only `tsc --noEmit`).
+actually ran — were verified only by a manual smoke run, because they need `git`
+and `npm`. The pure kernel they reuse was unit-tested; the I/O orchestration
+around it was not. [R9](THREAT_MODEL.md) was this gap.
 
-**What lands.** Automated coverage of the real path — begin/stage/commit,
-commit-on-green, reset-on-red, package-manager detection, and the establish modes —
-against a throwaway git fixture, wired into CI (which already runs `cargo test`).
-A first test around the advisor's envelope seam.
+**What landed.** Six tests locking in the real path, including the six fixes made
+while landing M1: commit-tracks-only-the-staged-set (not `git add -A`),
+stage-auto-opens-a-changeset, untracked-residue-tolerated (the liveness fix — a
+real `npm install` byproduct left in the tree must not wedge the next changeset),
+reset-on-red, begin-refuses-a-dirty-tracked-tree, and a clean establish baseline.
 
-**Where it lives.** `envelope/` tests exercising `worktree.rs`; a test surface for
-`advisor/` and a `test` script in `advisor/package.json`; `.github/workflows/ci.yml`.
+**Where it lives.** `envelope/tests/worktree_lifecycle.rs`.
 
-**Exit criterion.** R9 moves to Threats: the real adjudication path is covered by
-`cargo test` (green build commits, red build reverts, reach is enforced per stage),
-so a regression in the I/O orchestration fails CI rather than a manual run.
+**Not in this increment.** The advisor itself still has no automated test surface
+(CI runs only `tsc --noEmit`); that remains open and is not claimed as discharged
+by M3 — R9 was specifically about the real *envelope* adjudication path, which is
+now covered.
+
+**Exit criterion — met.** R9 has moved to Threats: the real adjudication path is
+covered by `cargo test` (green build commits, red build reverts, the commit is
+exactly the staged set), so a regression in the I/O orchestration fails CI rather
+than requiring a manual run.
 
 ## M4 — Abstract the effector off git (ADR 0003 follow-on)
 

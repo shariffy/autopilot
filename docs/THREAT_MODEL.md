@@ -75,6 +75,7 @@ Each threat assumes a capable, adversarial agent.
 | T7 | Widen its own permissions / rewrite the rules | `ModifyPolicy` is denied without inspection; the agent cannot reach the policy | `policy.rs::immutable_policy` |
 | T8 | Mutate the world without going through the monitor | `World` exposes only `&` views publicly; mutators are crate-private and `&mut World` is held only inside `enact` | `reversible.rs`, `harness.rs` |
 | T9 | Let a harmful change quietly persist | Outcome gate fails **closed** (unmeasured ⇒ breach) and auto-reverts; every step is logged | `guardrails.rs`, `harness.rs`, `decision_log.rs` |
+| T10 | A regression in the real (git-backed) changeset lifecycle — commit-scoping, reset-on-red, the clean-tree precondition — escapes to production because the I/O orchestration around the pure kernel is only smoke-tested | Real-path integration tests drive the compiled `envelope` binary against throwaway git repos with real `git` and `npm`/`tsc` builds: clean establish, commit tracks exactly the staged set, stage auto-opens a changeset, untracked build residue never wedges the next changeset, a failed build lands nothing and `reset` clears it, `begin` refuses a dirty tracked tree | `tests/worktree_lifecycle.rs` |
 
 ## Residual risks and assumptions to discharge
 
@@ -118,10 +119,6 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
   a written source file that the build configuration imports could in principle run
   at build time. Hardening (sandboxed/network-isolated build, pinned toolchain) is
   not yet done; the build runs in the local environment.
-- **R9 — Real path not in the unit suite.** `worktree::adjudicate_write` is
-  verified by a documented end-to-end smoke run (it needs `git` and `npm`), not by
-  `cargo test`. The pure kernel it reuses (`reach`, `policy`) *is* unit-tested; the
-  I/O orchestration around it is checked manually.
 
 ## Out of scope
 
@@ -135,7 +132,9 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
 This model is verifiable against the source: every mitigation names the module
 that implements it. The test suite exercises the policy denials and the outcome
 gate at runtime — T1, T2, T3, T4, T5, T7, and T9 (see the `reach` and `harness`
-test modules). T6 and T8 are enforced at **compile time** rather than by a test:
+test modules) — and T10 exercises the real git-backed path end to end (see
+`tests/worktree_lifecycle.rs`). T6 and T8 are enforced at **compile time** rather
+than by a test:
 agent-supplied verification, metrics, and guardrails are all unrepresentable in
 `Action`, and `&mut World` is never exposed — so they hold by construction. When a
 residual is discharged, move it from Residuals to Threats with its mitigation and
