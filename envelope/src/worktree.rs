@@ -116,9 +116,13 @@ impl BuildVerifier {
 }
 
 /// Open a changeset: require a clean work tree so the baseline (`HEAD`) is
-/// well-defined and a later revert is exact. Fails closed.
+/// well-defined and a later revert is exact, then record the open changeset so
+/// `stage` and `commit` can refuse to act outside one. Fails closed.
 pub fn begin(repo: &Path) -> Disposition {
-    match ensure_clean(repo) {
+    if let Err(reason) = ensure_clean(repo) {
+        return Disposition::Refused { reason };
+    }
+    match open_changeset(repo) {
         Ok(()) => Disposition::Begun,
         Err(reason) => Disposition::Refused { reason },
     }
@@ -126,10 +130,20 @@ pub fn begin(repo: &Path) -> Disposition {
 
 /// Stage one proposed write into the open changeset. Reach is the caller's
 /// responsibility (decided by the shared policy kernel before we are called); here
-/// we only apply the bytes. The tree is expected to be mid-changeset (dirty), so
-/// no clean check — that was asserted at `begin`.
+/// we only apply the bytes and record the path as part of this changeset. The tree
+/// is expected to be mid-changeset (dirty), so no clean check — that was asserted
+/// at `begin`. Refuses outside an open changeset: an unopened changeset has no
+/// asserted baseline, so what a later revert would mean is undefined.
 pub fn stage(repo: &Path, rel_path: &str, content: &[u8]) -> Disposition {
+    if !changeset_is_open(repo) {
+        return Disposition::Refused {
+            reason: "no open changeset; `begin` first so the baseline is asserted".to_string(),
+        };
+    }
     if let Err(reason) = write_file(repo, rel_path, content) {
+        return Disposition::Refused { reason };
+    }
+    if let Err(reason) = record_staged(repo, rel_path) {
         return Disposition::Refused { reason };
     }
     Disposition::Staged {
@@ -140,20 +154,21 @@ pub fn stage(repo: &Path, rel_path: &str, content: &[u8]) -> Disposition {
 /// Close the changeset: verify the accumulated tree with the repo's own build,
 /// then commit everything atomically on green or reset to the baseline on red.
 pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Disposition {
+    if !changeset_is_open(repo) {
+        return Disposition::Refused {
+            reason: "no open changeset; `begin` first so the baseline is asserted".to_string(),
+        };
+    }
     // Nothing staged ⇒ nothing to adjudicate. Refuse rather than make an empty
     // commit, so a no-op is visible rather than silently "successful".
-    match git(repo, &["status", "--porcelain"]) {
-        (false, _) => {
-            return Disposition::Refused {
-                reason: "could not read git status".to_string(),
-            }
-        }
-        (true, status) if status.trim().is_empty() => {
-            return Disposition::Refused {
-                reason: "no staged changes to commit".to_string(),
-            }
-        }
-        _ => {}
+    let staged = match staged_paths(repo) {
+        Ok(paths) => paths,
+        Err(reason) => return Disposition::Refused { reason },
+    };
+    if staged.is_empty() {
+        return Disposition::Refused {
+            reason: "no staged changes to commit".to_string(),
+        };
     }
 
     // Verify with the repository's own build — the trusted gate.
@@ -167,9 +182,15 @@ pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Dispositio
         };
     }
 
-    // Commit the whole verified changeset as one attributable commit.
+    // Commit exactly what this changeset staged — never `add -A`. The commit's
+    // contents must equal the adjudicated set, or the attributable-changeset claim
+    // is empty: anything else in the tree (a leftover from an earlier changeset
+    // whose build went red) would ride along under an intent that never covered it
+    // and a verification that never judged it.
     let message = format!("{intent}\n\n[envelope] verified by `{}`", verifier.describe(repo));
-    if !git(repo, &["add", "-A"]).0 {
+    let mut add = vec!["add", "--"];
+    add.extend(staged.iter().map(String::as_str));
+    if !git(repo, &add).0 {
         reset(repo);
         return Disposition::Refused {
             reason: "could not stage the changeset for commit".to_string(),
@@ -185,6 +206,7 @@ pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Dispositio
         .1
         .trim()
         .to_string();
+    close_changeset(repo);
     Disposition::Committed { commit }
 }
 
@@ -243,6 +265,25 @@ pub fn establish(workspace: &Path, mode: Establish, verifier: &BuildVerifier) ->
     }
 }
 
+/// Build products and machine-local noise: never part of a changeset, so the
+/// commit stays the adjudicated set and nothing else.
+///
+/// Lockfiles are here because the *verifier* writes them, not the agent: `install`
+/// runs inside the trusted gate, after staging has closed. An unignored lockfile is
+/// therefore residue the agent never proposed and cannot stage — and it would leave
+/// the tree dirty, so the next `begin` would refuse and the run would wedge after a
+/// single changeset. Ignored, they still sit on disk for package-manager detection.
+const BASELINE_IGNORES: &str = concat!(
+    "node_modules/\n",
+    "dist/\n",
+    "build/\n",
+    "package-lock.json\n",
+    "pnpm-lock.yaml\n",
+    "yarn.lock\n",
+    ".DS_Store\n",
+    "*.log\n",
+);
+
 fn establish_empty(workspace: &Path) -> Disposition {
     if let Err(e) = std::fs::create_dir_all(workspace) {
         return Disposition::Refused {
@@ -254,7 +295,19 @@ fn establish_empty(workspace: &Path) -> Disposition {
             reason: "could not initialise git in the workspace".to_string(),
         };
     }
-    if !git(workspace, &["commit", "--quiet", "--allow-empty", "-m", "baseline"]).0 {
+    // Baseline ignores, committed so the baseline tree is clean. Without these the
+    // verifier's own `install` leaves build products in the tree, where they would
+    // be indistinguishable from the agent's work — and `clean -fd` on a red build
+    // would delete a dependency tree the agent never wrote and cannot restore.
+    if let Err(reason) = write_file(workspace, ".gitignore", BASELINE_IGNORES.as_bytes()) {
+        return Disposition::Refused { reason };
+    }
+    if !git(workspace, &["add", "--", ".gitignore"]).0 {
+        return Disposition::Refused {
+            reason: "could not stage the baseline ignores".to_string(),
+        };
+    }
+    if !git(workspace, &["commit", "--quiet", "-m", "baseline"]).0 {
         return Disposition::Refused {
             reason: "could not create the baseline commit (is git user.name/email set?)".to_string(),
         };
@@ -314,6 +367,50 @@ fn ensure_clean(repo: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Where the open changeset is recorded: inside `.git`, which is a never-writable
+/// zone for the agent (see `invariants::reach`). The brain therefore cannot open a
+/// changeset, forge its membership, or close one — it can only ask, and be judged.
+fn changeset_marker(repo: &Path) -> PathBuf {
+    repo.join(".git").join("envelope-changeset")
+}
+
+fn changeset_is_open(repo: &Path) -> bool {
+    changeset_marker(repo).exists()
+}
+
+/// Record an open changeset with, as yet, no members.
+fn open_changeset(repo: &Path) -> Result<(), String> {
+    std::fs::write(changeset_marker(repo), b"")
+        .map_err(|e| format!("could not open the changeset: {e}"))
+}
+
+fn close_changeset(repo: &Path) {
+    let _ = std::fs::remove_file(changeset_marker(repo));
+}
+
+/// Add a path to the open changeset's membership. Re-staging the same path (a
+/// fix-and-retry after a red build) must not duplicate it.
+fn record_staged(repo: &Path, rel_path: &str) -> Result<(), String> {
+    let mut paths = staged_paths(repo)?;
+    if !paths.iter().any(|p| p == rel_path) {
+        paths.push(rel_path.to_string());
+    }
+    std::fs::write(changeset_marker(repo), paths.join("\n"))
+        .map_err(|e| format!("could not record `{rel_path}` in the changeset: {e}"))
+}
+
+/// The paths staged into the open changeset, in staging order.
+fn staged_paths(repo: &Path) -> Result<Vec<String>, String> {
+    let raw = std::fs::read_to_string(changeset_marker(repo))
+        .map_err(|e| format!("could not read the open changeset: {e}"))?;
+    Ok(raw
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
 /// Apply bytes to the tree, creating parent directories as needed.
 fn write_file(repo: &Path, rel_path: &str, content: &[u8]) -> Result<(), String> {
     let abs = repo.join(rel_path);
@@ -330,7 +427,10 @@ fn write_file(repo: &Path, rel_path: &str, content: &[u8]) -> Result<(), String>
 /// (an abort, or a one-shot edit that failed the build).
 pub fn reset(repo: &Path) {
     let _ = git(repo, &["reset", "--hard", "HEAD"]);
+    // `clean -fd` without `-x`: ignored paths (a maintained `node_modules/`) survive,
+    // so abandoning a changeset costs a rebuild but never a reinstall.
     let _ = git(repo, &["clean", "-fd"]);
+    close_changeset(repo);
 }
 
 /// Run a git subcommand in `repo`, returning (success, combined stdout+stderr).
