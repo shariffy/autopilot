@@ -79,13 +79,25 @@ ADR, for $0.96 over 53 turns, none of it requiring the agent to be trustworthy �
 every commit passed through the envelope's own build gate. See
 [docs/runs/0001-first-light.md](docs/runs/0001-first-light.md).
 
-The app it built is a real, separate repository —
-[autopilot-demo-admin-console](https://github.com/shariffy/autopilot-demo-admin-console).
-Its `git log` shows the trust boundary directly: the untrusted **advisor** as
-author, the trusted **envelope** as committer, on every change it landed.
+The outcomes it produces are real, separate repositories. Each one's `git log`
+shows the trust boundary directly — the untrusted **advisor** as author, the
+trusted **envelope** as committer, on every change the system landed:
+
+- **[autopilot-demo-admin-console](https://github.com/shariffy/autopilot-demo-admin-console)**
+  — the living app: built from nothing (genesis), then autonomously *maintained*
+  from a real analytics signal (a sortable-columns feature). Genesis + Phase B.
+- **[autopilot-demo-incident](https://github.com/shariffy/autopilot-demo-incident)**
+  — the runtime envelope: a change that built green but crashed in production is
+  caught by a model-free **trip** (`git revert` to last-known-good) and then
+  durably fixed by the advisor under a frozen reproducer it cannot author. Phase C.
+- **[autopilot-demo-design](https://github.com/shariffy/autopilot-demo-design)**
+  — the design-system invariant: the envelope rejects ad-hoc UI, so the advisor
+  composes only from a frozen design system. Phase D.
 
 The trust boundary is real and the build is a genuine verification gate; the real
-(git-backed) adjudication path M1 exercised is now under automated test
+(git-backed) adjudication path is under automated test
 (`envelope/tests/worktree_lifecycle.rs`). The load-bearing remaining residual is
-agentic **UI** verification — confirming a rendered page actually works, not just
-that it compiles — tracked honestly in the [threat model](docs/THREAT_MODEL.md).
+general agentic **UI** verification — a seeded reproducer and the runtime trip
+narrow it (ADR 0011), but confirming *arbitrary* rendered behaviour, not just that
+it compiles and passes a seeded test, is still open — tracked honestly in the
+[threat model](docs/THREAT_MODEL.md).
