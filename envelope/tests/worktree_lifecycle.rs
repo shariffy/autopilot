@@ -909,3 +909,74 @@ fn refresh_deps_stages_the_lockfile_without_touching_package_json() {
         "the lockfile should have been recomputed by refresh-deps with real resolution data: {lockfile}"
     );
 }
+
+// ---- 8. the envelope stamps the trust roles on every commit (ADR 0010) ----
+
+/// A changeset `commit` is authored by the advisor and committed by the
+/// envelope — regardless of the test harness's own ambient `GIT_*` identity
+/// envs (`git_identity_envs`), proving the envelope's explicit identity always
+/// wins over whatever git identity happens to be configured.
+#[test]
+fn changeset_commit_is_attributed_to_advisor_author_and_envelope_committer() {
+    let ws = Workspace::new("commit-identity");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    let (ok, out) = git(ws.path(), &["log", "-1", "--format=%an <%ae>|%cn <%ce>"]);
+    assert!(ok, "git log: {out}");
+    assert_eq!(
+        out.trim(),
+        "Autopilot advisor <advisor@autopilot.invalid>|Autopilot envelope <envelope@autopilot.invalid>",
+        "a changeset commit should be authored by the advisor and committed by the envelope, not the test harness's ambient git identity: {out}"
+    );
+}
+
+/// The `establish` baseline commit is trusted setup, not the advisor's work: both
+/// author and committer are the envelope, again regardless of the harness's
+/// ambient `GIT_*` envs.
+#[test]
+fn establish_baseline_commit_is_attributed_to_the_envelope_as_both_author_and_committer() {
+    let ws = Workspace::new("establish-identity");
+    let out = establish_empty(&ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+
+    let (ok, out) = git(ws.path(), &["log", "-1", "--format=%an <%ae>|%cn <%ce>"]);
+    assert!(ok, "git log: {out}");
+    assert_eq!(
+        out.trim(),
+        "Autopilot envelope <envelope@autopilot.invalid>|Autopilot envelope <envelope@autopilot.invalid>",
+        "the establish baseline should be attributed to the envelope alone, as both author and committer: {out}"
+    );
+}
+
+/// A multi-line `commit` intent (what `commit_changeset`'s `summary` becomes) is
+/// preserved verbatim — subject on the first line, a blank line, then the body —
+/// never flattened into a single enormous subject line.
+#[test]
+fn multiline_commit_summary_is_preserved_not_flattened() {
+    let ws = Workspace::new("multiline-message");
+    let out = establish_empty(&ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+    stage_green_fixture(&ws);
+
+    let intent = "Add the fixture TS project\n\nBrings in package.json, tsconfig.json, and a\nminimal src/index.ts so the build has something to check.";
+    let out = commit(&ws, intent);
+    assert!(out.contains("\"outcome\":\"committed\""), "{out}");
+
+    let (ok, body) = git(ws.path(), &["log", "-1", "--format=%B"]);
+    assert!(ok, "git log: {body}");
+    let lines: Vec<&str> = body.lines().collect();
+    assert_eq!(
+        lines[0], "Add the fixture TS project",
+        "the subject should be the message's first line, unflattened: {lines:?}"
+    );
+    assert_eq!(
+        lines[1], "",
+        "a blank line should separate subject from body: {lines:?}"
+    );
+    assert!(
+        body.contains(
+            "Brings in package.json, tsconfig.json, and a\nminimal src/index.ts so the build has something to check."
+        ),
+        "the body should keep its internal newline rather than being collapsed to spaces: {body:?}"
+    );
+}

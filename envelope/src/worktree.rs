@@ -24,6 +24,20 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The identity stamped as **author** on a changeset commit and as **author
+/// and committer** on the `establish` baseline: `(name, email)`. The advisor
+/// proposed the change; it never runs `git` itself and holds no git identity of
+/// its own — this is a fixed, hermetic label for "what the untrusted brain
+/// proposed", not a real account (ADR 0010).
+const ADVISOR_IDENT: (&str, &str) = ("Autopilot advisor", "advisor@autopilot.invalid");
+
+/// The identity stamped as **committer** on every commit the envelope makes, and
+/// as **author** too wherever the envelope itself is the sole author of the work
+/// (the `establish` baseline — trusted setup, not the advisor's proposal). The
+/// trusted core commits everything; this says so on every commit, hermetically,
+/// regardless of the host's ambient git config (ADR 0010).
+const ENVELOPE_IDENT: (&str, &str) = ("Autopilot envelope", "envelope@autopilot.invalid");
+
 /// What actually happened, mirroring [`crate::types::Outcome`] but carrying the
 /// real-world evidence (a commit hash, a build-failure tail) the caller needs.
 pub enum Disposition {
@@ -427,7 +441,18 @@ pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Dispositio
             reason: "could not stage the changeset for commit".to_string(),
         };
     }
-    if !git(repo, &["commit", "--quiet", "-m", &message]).0 {
+    // Stamped identity, not the host's ambient git config (ADR 0010): the advisor
+    // proposed this changeset, the envelope committed it on green, and every
+    // changeset commit says exactly that regardless of what `git config` happens
+    // to hold on the machine running the envelope.
+    if !git_commit_as(
+        repo,
+        &["commit", "--quiet", "-m", &message],
+        ADVISOR_IDENT,
+        ENVELOPE_IDENT,
+    )
+    .0
+    {
         reset(repo);
         return Disposition::Refused {
             reason: "could not commit the verified changeset".to_string(),
@@ -584,10 +609,19 @@ fn establish_empty(workspace: &Path) -> Disposition {
             reason: "could not stage the baseline ignores".to_string(),
         };
     }
-    if !git(workspace, &["commit", "--quiet", "-m", "baseline"]).0 {
+    // Trusted setup, not the advisor's work (ADR 0010): author and committer are
+    // both the envelope. Stamped explicitly, so this never depends on whether the
+    // host running the envelope happens to have a `git config user.name/email`.
+    if !git_commit_as(
+        workspace,
+        &["commit", "--quiet", "-m", "baseline"],
+        ENVELOPE_IDENT,
+        ENVELOPE_IDENT,
+    )
+    .0
+    {
         return Disposition::Refused {
-            reason: "could not create the baseline commit (is git user.name/email set?)"
-                .to_string(),
+            reason: "could not create the baseline commit".to_string(),
         };
     }
     Disposition::Established {
@@ -730,6 +764,38 @@ pub fn reset(repo: &Path) {
 /// Run a git subcommand in `repo`, returning (success, combined stdout+stderr).
 fn git(repo: &Path, args: &[&str]) -> (bool, String) {
     run_in(repo, "git", args)
+}
+
+/// Run a git subcommand in `repo` with an explicit author/committer identity
+/// (ADR 0010), each a `(name, email)` pair. Sets `GIT_AUTHOR_NAME/EMAIL` and
+/// `GIT_COMMITTER_NAME/EMAIL` on the child process — `Command::env` always wins
+/// over whatever the parent process inherited or the host's git config holds, so
+/// the identity on a commit the envelope makes is never the ambient operator's,
+/// hermetically, regardless of what runs the envelope. Used only for the git
+/// subcommands that actually create a commit; every other git call keeps using
+/// `git`, which carries no opinion about identity because it never needs one.
+fn git_commit_as(
+    repo: &Path,
+    args: &[&str],
+    author: (&str, &str),
+    committer: (&str, &str),
+) -> (bool, String) {
+    match Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .env("GIT_AUTHOR_NAME", author.0)
+        .env("GIT_AUTHOR_EMAIL", author.1)
+        .env("GIT_COMMITTER_NAME", committer.0)
+        .env("GIT_COMMITTER_EMAIL", committer.1)
+        .output()
+    {
+        Ok(out) => {
+            let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
+            combined.push_str(&String::from_utf8_lossy(&out.stderr));
+            (out.status.success(), combined)
+        }
+        Err(e) => (false, format!("could not run `git`: {e}")),
+    }
 }
 
 /// Run an arbitrary command in `repo`, returning (success, combined output).
