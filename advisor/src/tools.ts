@@ -227,7 +227,10 @@ export function buildToolServer(ctx: ToolContext, state: LoopState) {
     "Verify and commit everything staged so far. The envelope runs the outcome's own build over the whole staged tree. If it passes, the changeset lands as one commit (COMMITTED). If it fails, nothing commits and your staged files are kept (BUILD_FAILED) — read the error, stage fixes, and call commit_changeset again. Call this only when you believe the staged set should build.",
     { summary: z.string().describe('Commit message for the whole changeset.') },
     async (args) => {
-      const intent = args.summary.replace(/\s+/g, ' ').trim()
+      // Preserve the message as written — a real git commit message has a
+      // subject line, a blank line, then a body; flattening every newline into
+      // one line would turn a multi-line message into one enormous subject.
+      const intent = args.summary.trim()
       const verdict = await commitChangeset({ bin: ctx.envelopeBin, repo: ctx.repo, intent })
       await journal(ctx, { action: 'commit', intent, verdict })
       return report(state, verdict)
