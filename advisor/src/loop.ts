@@ -63,7 +63,7 @@ function maintenanceSystemPrompt(sourceNames: string[]): string {
 
 The workspace already exists and already builds green. Do NOT call establish_workspace — there is nothing to establish. Begin by reading the existing tree (list_dir/read_file) to understand what is there, then read the sensor source(s).
 
-Reach under Maintenance is narrow and fitted to this app, not the whole tree: you may write inside \`src/pages/\` and \`src/components/\`, and \`package.json\` (dependency maintenance) by exact match. Everything else is frozen and the envelope will reject writes to it, in particular: \`src/data/\` (the data/fixture contract — do not add fields, do not change shapes) and \`src/App.tsx\`/\`src/types.ts\`/\`src/main.tsx\` (app structure — do not add routes, do not touch the type contract). \`docs/\` is also outside the Maintenance allowlist, so you cannot stage an ADR file into the outcome this run — if you want to record your rationale, put it in the \`commit_changeset\` summary instead; do not spend a turn fighting the boundary trying \`docs/adr/...\`.
+Reach under Maintenance is narrow and fitted to this app, not the whole tree: you may write inside \`src/pages/\` and \`src/components/\`; \`package.json\` (dependency maintenance) by exact match; and \`docs/adr/\` (recording your decision — see step 3). Everything else is frozen and the envelope will reject writes to it, in particular: \`src/data/\` (the data/fixture contract — do not add fields, do not change shapes) and \`src/App.tsx\`/\`src/types.ts\`/\`src/main.tsx\` (app structure — do not add routes, do not touch the type contract). Inside \`docs/\`, only \`docs/adr/\` is writable — nothing else there is in reach.
 
 ${sources}
 
@@ -73,9 +73,11 @@ Your job, in order:
 
 2. PROPOSE ONE BOUNDED CHANGE. Not a rebuild, not a feature list — a single, narrow change that responds directly to what the sensor shows, staged into the existing app. Work within an existing page or a new component under \`src/components/\`; do not add routes or touch the data contract.
 
-3. STAGE the change with propose_write. A rejected write means you went out of reach — choose an allowed path; do not fight the boundary.
+3. RECORD your rationale as an ADR: read the existing \`docs/adr/\` tree (list_dir/read_file) to find the next number, then stage \`docs/adr/NNNN-<short-slug>.md\` with propose_write — what you observed, the change you chose and WHY, tied to the sensor signal. Keep it a clean first-principles record, like the ADRs already there — same as genesis, not dumped into the commit message. It stages as part of the same changeset as the code change.
 
-4. COMMIT the change: call commit_changeset with an intent line written like a good commit subject, and use its body to record why (tie it to the sensor signal) since docs/adr is not reachable this run. If it returns BUILD_FAILED, read the build output in the verdict, stage fixes, and commit again. Iterate until it is COMMITTED green.
+4. STAGE the change (and the ADR) with propose_write. A rejected write means you went out of reach — choose an allowed path; do not fight the boundary.
+
+5. COMMIT the change: call commit_changeset with a proper git commit message — a concise imperative subject line (about 50-72 characters), then a blank line, then a short body if needed. The full analysis belongs in the ADR you staged, not the commit message. If it returns BUILD_FAILED, read the build output in the verdict, stage fixes, and commit again. Iterate until it is COMMITTED green.
 
 Stop once one green maintenance changeset has landed. Give a short plain summary: what the sensor showed, the change you made, and how it addresses the signal. Report faithfully — if something would not build and you could not resolve it, say so.`
 }
