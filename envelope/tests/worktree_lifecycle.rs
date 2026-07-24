@@ -120,6 +120,30 @@ const FIXTURE_PACKAGE_JSON_WITH_FAILING_TEST: &str = r#"{
 }
 "#;
 
+// ---- design-conformance fixtures (ADR 0012, Phase D) ----
+//
+// `design.rs` lints staged `.tsx` files by SUBSTRING, never by parsing JSX
+// (the crate stays zero-dependency), so these fixtures need not be real JSX
+// to exercise it — plain `.tsx` source containing (or not containing) the
+// banned substrings is enough, which keeps this bare `tsc`-only fixture
+// project (no `--jsx`, no React) sufficient for the design stage tests below.
+// A stub `src/design-system/index.ts` gives the fixtures' `../design-system`
+// import a real module to resolve, so the *build* stays green — the design
+// stage runs strictly after a green build (`worktree.rs::BuildVerifier::run`).
+
+const FIXTURE_DESIGN_SYSTEM_INDEX_TS: &str = "export const Button = 0;\n";
+
+// Imports the design system and contains none of the banned substrings —
+// the conformant case.
+const FIXTURE_CONFORMANT_PAGE_TSX: &str =
+    "import { Button } from '../design-system'\n\nexport const marker = 'conformant page fixture'\n";
+
+// Imports the design system (so it does NOT trip the missing-import rule) but
+// contains a raw `<button` and an inline `style={{` — the two other rules,
+// both violated by the same file, deliberately, so the rejection's detail can
+// be checked for both rule names at once.
+const FIXTURE_VIOLATING_PAGE_TSX: &str = "import { Button } from '../design-system'\n\nexport const marker = '<button style={{}}>click</button>'\n";
+
 // ---- process plumbing ----
 
 fn envelope_bin() -> &'static str {
@@ -1172,4 +1196,133 @@ fn monitor_threshold_flag_overrides_the_telemetry_files_own_threshold() {
 
     let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
     assert_ne!(head_before, head_after, "the override should have tripped");
+}
+
+// ---- 11. design conformance: the design-system invariant (ADR 0012, Phase D) ----
+
+/// Stage the design-system stub as trusted baseline infrastructure — genesis
+/// clearance, mirroring how the real Phase D scenario seeds
+/// `src/design-system/` before any maintenance changeset touches a page (see
+/// the freeze test below: Maintenance itself cannot write this zone).
+fn land_design_system_stub(ws: &Workspace) {
+    let out = stage_with_clearance(
+        ws,
+        "src/design-system/index.ts",
+        FIXTURE_DESIGN_SYSTEM_INDEX_TS,
+        "genesis",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+    let out = commit(
+        ws,
+        "seed the design system as trusted baseline infrastructure",
+    );
+    assert!(out.contains("\"outcome\":\"committed\""), "{out}");
+}
+
+/// A maintenance changeset that composes a page from the design system —
+/// imports it, uses none of the banned raw tags, no inline style — passes the
+/// design stage and commits green, same as any other conformant change.
+#[test]
+fn design_conformant_page_commits_green() {
+    let ws = Workspace::new("design-conformant");
+    land_green_fixture(&ws, "add the fixture ts project");
+    land_design_system_stub(&ws);
+
+    let out = stage_with_clearance(
+        &ws,
+        "src/pages/Toolbar.tsx",
+        FIXTURE_CONFORMANT_PAGE_TSX,
+        "maintenance",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "add a page composed from the design system");
+    assert!(
+        out.contains("\"outcome\":\"committed\""),
+        "a conformant page should pass the design stage and commit: {out}"
+    );
+}
+
+/// A page that reaches for a raw `<button>` and an inline `style={{...}}`
+/// instead of the design system is rejected by the design stage — the build
+/// itself is green (the fixture is valid TypeScript), so this is specifically
+/// the design-conformance gate firing, not `tsc`.
+#[test]
+fn design_violating_page_is_rejected_by_the_design_stage() {
+    let ws = Workspace::new("design-violation");
+    land_green_fixture(&ws, "add the fixture ts project");
+    land_design_system_stub(&ws);
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    let out = stage_with_clearance(
+        &ws,
+        "src/pages/Toolbar.tsx",
+        FIXTURE_VIOLATING_PAGE_TSX,
+        "maintenance",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "add a page that reaches for raw markup");
+    assert!(
+        out.contains("\"outcome\":\"build_failed\""),
+        "a raw <button> with an inline style must fail the design stage: {out}"
+    );
+    assert!(
+        out.contains("src/pages/Toolbar.tsx"),
+        "the rejection should name the offending file: {out}"
+    );
+    assert!(
+        out.contains("raw `<button`"),
+        "the rejection should name the specific rule: {out}"
+    );
+    assert!(
+        out.contains("inline `style={{"),
+        "the rejection should name the inline-style rule too: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head_before, head_after,
+        "HEAD must not move when the design stage rejects the changeset"
+    );
+}
+
+/// `src/design-system/` is frozen under Maintenance (ADR 0012): the agent
+/// composes UI from the primitives but cannot fork or edit them, the same
+/// discipline as `src/api/`/`src/data/`. Genesis, which brings the primitives
+/// into existence in the first place, is unaffected.
+#[test]
+fn design_system_is_frozen_under_maintenance_but_writable_under_genesis() {
+    let ws = Workspace::new("design-system-frozen");
+    let out = establish_empty(&ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+
+    let out = stage_with_clearance(
+        &ws,
+        "src/design-system/Button.tsx",
+        "export const Button = 0;\n",
+        "maintenance",
+    );
+    assert!(
+        out.contains("\"outcome\":\"rejected\""),
+        "maintenance must not be able to write the design system: {out}"
+    );
+    assert!(
+        out.to_lowercase().contains("forbidden"),
+        "the reason should name a forbidden zone: {out}"
+    );
+
+    let out = stage_with_clearance(
+        &ws,
+        "src/design-system/Button.tsx",
+        "export const Button = 0;\n",
+        "genesis",
+    );
+    assert!(
+        out.contains("\"outcome\":\"staged\""),
+        "genesis must be able to establish the design system in the first place: {out}"
+    );
+
+    reset(&ws);
 }
