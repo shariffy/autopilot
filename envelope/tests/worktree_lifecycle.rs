@@ -95,6 +95,31 @@ const FIXTURE_PACKAGE_JSON_WITH_VULNERABLE_DEP_DESCRIBED: &str = r#"{
 }
 "#;
 
+// A `test` script that always succeeds — a plain `node -e`, not a real test
+// runner, so the test-stage tests below stay fast and need no extra
+// dependency beyond what the fixture already resolves. What matters to the
+// gate is only that the outcome DECLARES a `test` script and that script's
+// exit code, not what it actually does.
+const FIXTURE_PACKAGE_JSON_WITH_PASSING_TEST: &str = r#"{
+  "name": "fixture",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": { "build": "tsc", "test": "node -e \"process.exit(0)\"" },
+  "devDependencies": { "typescript": "^5.5.4" }
+}
+"#;
+
+// Same shape, but the `test` script fails — the build-green/test-red case the
+// test stage exists to catch (THREAT_MODEL.md R7).
+const FIXTURE_PACKAGE_JSON_WITH_FAILING_TEST: &str = r#"{
+  "name": "fixture",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": { "build": "tsc", "test": "node -e \"process.exit(1)\"" },
+  "devDependencies": { "typescript": "^5.5.4" }
+}
+"#;
+
 // ---- process plumbing ----
 
 fn envelope_bin() -> &'static str {
@@ -979,4 +1004,172 @@ fn multiline_commit_summary_is_preserved_not_flattened() {
         ),
         "the body should keep its internal newline rather than being collapsed to spaces: {body:?}"
     );
+}
+
+// ---- 9. the verifier's test stage: build-green is not enough (partially discharges R7) ----
+
+/// A changeset whose `test` script fails is rejected by the build gate, even
+/// though `tsc`/`vite build` themselves are green — the exact shape a runtime
+/// crash a type checker cannot see takes (THREAT_MODEL.md R7).
+#[test]
+fn test_stage_fails_a_changeset_whose_test_script_fails() {
+    let ws = Workspace::new("test-stage-red");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    let out = stage_with_clearance(
+        &ws,
+        "package.json",
+        FIXTURE_PACKAGE_JSON_WITH_FAILING_TEST,
+        "maintenance",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "add a test script that fails");
+    assert!(
+        out.contains("\"outcome\":\"build_failed\""),
+        "a failing test script must fail the changeset, exactly like a failing build: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head_before, head_after,
+        "HEAD must not move when the test stage fails"
+    );
+}
+
+/// A changeset whose `test` script passes commits green, same as any other
+/// changeset — the test stage is additive, not a new obstacle for outcomes
+/// that already pass it.
+#[test]
+fn test_stage_allows_a_changeset_whose_test_script_passes() {
+    let ws = Workspace::new("test-stage-green");
+    land_fixture_with_package_json(
+        &ws,
+        FIXTURE_PACKAGE_JSON_WITH_PASSING_TEST,
+        "add the fixture ts project with a passing test",
+    );
+    // `land_fixture_with_package_json` already asserts `"outcome":"committed"` —
+    // reaching this point means build AND test both passed.
+}
+
+// ---- 10. the runtime envelope's fast loop: `envelope monitor` (ADR 0011) ----
+
+/// Write a small hand-authored telemetry fixture inside the workspace (an
+/// untracked file — `ensure_clean` tolerates those, same as any other build
+/// byproduct) and return its path.
+fn write_telemetry(ws: &Workspace, contents: &str) -> PathBuf {
+    let path = ws.path().join("telemetry.json");
+    fs::write(&path, contents).expect("write telemetry fixture");
+    path
+}
+
+fn monitor(ws: &Workspace, telemetry: &Path, threshold: Option<&str>) -> String {
+    let telemetry_str = telemetry.to_str().expect("telemetry path is valid utf-8");
+    let mut args = vec![
+        "monitor",
+        "--repo",
+        ws.path_str(),
+        "--telemetry",
+        telemetry_str,
+    ];
+    if let Some(t) = threshold {
+        args.push("--threshold");
+        args.push(t);
+    }
+    envelope(&args, &[])
+}
+
+/// An error rate above threshold trips the runtime envelope: it reverts the
+/// currently-deployed change with a real `git revert`, stamped as the
+/// envelope's own action — both author AND committer, no advisor identity
+/// anywhere in it, because no advisor supplied anything this path used.
+#[test]
+fn monitor_trips_and_reverts_on_an_error_rate_breach_stamped_as_the_envelope() {
+    let ws = Workspace::new("monitor-tripped");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    // A second, "deployed" changeset — what the trip below will revert.
+    let out = stage(&ws, "src/extra.ts", FIXTURE_EXTRA_TS_GREEN);
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+    let out = commit(&ws, "the deployed change the trip should revert");
+    assert!(out.contains("\"outcome\":\"committed\""), "{out}");
+    assert!(ws.path().join("src/extra.ts").is_file());
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    let telemetry = write_telemetry(&ws, r#"{"error_rate": 0.5, "threshold": 0.02}"#);
+    let out = monitor(&ws, &telemetry, None);
+    assert!(
+        out.contains("\"outcome\":\"tripped\""),
+        "an error-rate breach should trip the runtime envelope: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_ne!(
+        head_before, head_after,
+        "a trip should land a new revert commit"
+    );
+
+    // The revert is attributed to the envelope alone — no advisor identity,
+    // because the advisor supplied nothing on this path (ADR 0010, ADR 0011).
+    let (ok, identity) = git(ws.path(), &["log", "-1", "--format=%an <%ae>|%cn <%ce>"]);
+    assert!(ok, "git log: {identity}");
+    assert_eq!(
+        identity.trim(),
+        "Autopilot envelope <envelope@autopilot.invalid>|Autopilot envelope <envelope@autopilot.invalid>",
+        "the trip's revert must be attributed to the envelope alone, as both author and committer: {identity}"
+    );
+
+    // The revert actually undid the deployed change.
+    assert!(
+        !ws.path().join("src/extra.ts").exists(),
+        "the revert should remove what the reverted commit added"
+    );
+}
+
+/// An error rate at or below threshold leaves the deployed change exactly as
+/// it was — no revert, no commit, `HEAD` unmoved.
+#[test]
+fn monitor_reports_nominal_and_changes_nothing_below_threshold() {
+    let ws = Workspace::new("monitor-nominal");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    let telemetry = write_telemetry(&ws, r#"{"error_rate": 0.001, "threshold": 0.02}"#);
+    let out = monitor(&ws, &telemetry, None);
+    assert!(
+        out.contains("\"outcome\":\"nominal\""),
+        "a healthy error rate must not trip: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head_before, head_after,
+        "nominal telemetry must not move HEAD"
+    );
+}
+
+/// `--threshold` overrides whatever the telemetry file itself records — an
+/// operator narrowing the SLO for one call, independent of the sensor's own
+/// recorded ceiling.
+#[test]
+fn monitor_threshold_flag_overrides_the_telemetry_files_own_threshold() {
+    let ws = Workspace::new("monitor-threshold-override");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    // The file's own threshold (0.9) alone would call 0.5 nominal.
+    let telemetry = write_telemetry(&ws, r#"{"error_rate": 0.5, "threshold": 0.9}"#);
+    let out = monitor(&ws, &telemetry, Some("0.1"));
+    assert!(
+        out.contains("\"outcome\":\"tripped\""),
+        "the --threshold flag should win over the telemetry file's own threshold: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_ne!(head_before, head_after, "the override should have tripped");
 }
