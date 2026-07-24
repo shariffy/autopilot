@@ -79,20 +79,21 @@ ADR, for $0.96 over 53 turns, none of it requiring the agent to be trustworthy �
 every commit passed through the envelope's own build gate. See
 [docs/runs/0001-first-light.md](docs/runs/0001-first-light.md).
 
-The outcomes it produces are real, separate repositories. Each one's `git log`
-shows the trust boundary directly — the untrusted **advisor** as author, the
-trusted **envelope** as committer, on every change the system landed:
+The outcome it produces is a real, separate repository —
+**[autopilot-demo-admin-console](https://github.com/shariffy/autopilot-demo-admin-console)**
+— and its `git log` is the whole demonstration, told as one continuous history
+rather than scattered across repos: the untrusted **advisor** as author, the
+trusted **envelope** as committer, on every change the system landed, in order:
 
-- **[autopilot-demo-admin-console](https://github.com/shariffy/autopilot-demo-admin-console)**
-  — the living app: built from nothing (genesis), then autonomously *maintained*
-  from a real analytics signal (a sortable-columns feature). Genesis + Phase B.
-- **[autopilot-demo-incident](https://github.com/shariffy/autopilot-demo-incident)**
-  — the runtime envelope: a change that built green but crashed in production is
-  caught by a model-free **trip** (`git revert` to last-known-good) and then
-  durably fixed by the advisor under a frozen reproducer it cannot author. Phase C.
-- **[autopilot-demo-design](https://github.com/shariffy/autopilot-demo-design)**
-  — the design-system invariant: the envelope rejects ad-hoc UI, so the advisor
-  composes only from a frozen design system. Phase D.
+1. **Genesis** — the app built from nothing.
+2. **Autonomous maintenance** — a sortable-columns feature landed from a real
+   analytics signal, unprompted by a human ask.
+3. **A self-healing incident** — a change built green but crashed in production;
+   a model-free **runtime trip** (`git revert` to last-known-good) caught it, then
+   the advisor landed a durable fix under a frozen reproducer it cannot author
+   (ADR 0011).
+4. **Design governance** — the envelope began rejecting ad-hoc UI, so the next
+   feature composed only from a sanctioned design system (ADR 0012).
 
 The trust boundary is real and the build is a genuine verification gate; the real
 (git-backed) adjudication path is under automated test
