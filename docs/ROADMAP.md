@@ -43,15 +43,15 @@ author (`tests/contract/`, ADR 0011) — for $0.22. This partially discharges R7
 (the test stage catches build-green/runtime-broken pre-commit; the trip auto-heals
 in production); the general case stays open.
 
-**Phase D infrastructure has landed; the run has not.** Reach now freezes
-`src/design-system/` under Maintenance and a new verifier stage requires
-staged UI files to actually compose from it — the design-system invariant. A
-third project (`admin-console-design/`, external, sibling to `admin-console/`)
-holds a design-system-seeded clone with one observation. See "Phase D" below
-— proven with the envelope binary directly (a conformant change commits, a
-raw-`<button>`/inline-style change is rejected naming the rule, the frozen
-primitives reject Maintenance and accept Genesis, reset back to baseline); the
-advisor run against it is a separate, paid step, not yet taken.
+**Phase D has run: the design-system invariant.** Reach freezes
+`src/design-system/` under Maintenance, and a content-level verifier stage
+(`design.rs`, which reach itself cannot express — reach sees a path and a byte
+count, never the bytes) requires staged UI files to compose from the frozen
+primitives, rejecting raw `<button>`/`<input>`/`<a>` and inline `style={{}}`. On
+2026-07-24 the advisor (Sonnet 4.6) added a "Clear filters" button to the
+Products toolbar using the design-system `Button` — no raw HTML, no inline
+styles — green through the design stage, for $0.17. The residual (R11): the lint
+is a deliberate enforceable subset, not a full composition grammar.
 
 ## The order, and why
 
