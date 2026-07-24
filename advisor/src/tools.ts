@@ -17,6 +17,7 @@ import {
   establishWorkspace,
   stageWrite,
   commitChangeset,
+  refreshDependencies,
   describeVerdict,
   type Clearance,
   type Verdict,
@@ -199,6 +200,28 @@ export function buildToolServer(ctx: ToolContext, state: LoopState) {
     },
   )
 
+  const refreshDeps = tool(
+    'refresh_dependencies',
+    'Refresh dependency resolution for the current changeset WITHOUT changing package.json — the pure-transitive case (ADR 0009): a fix entirely inside the ranges package.json already allows, or just re-resolving. You propose the operation; the ENVELOPE computes the lockfile — you can never write package-lock.json (or pnpm-lock.yaml/yarn.lock) yourself, under any clearance (propose_write refuses it). Set audit_fix to run `npm audit fix` within existing ranges; otherwise it is a plain re-resolve. If a fix needs a NEW range or a new dependency, edit package.json with propose_write instead — the envelope resolves the lockfile for you at commit time. Stages the recomputed lockfile into the current changeset; call commit_changeset next to verify and land it.',
+    {
+      audit_fix: z
+        .boolean()
+        .optional()
+        .describe(
+          'If true, run `npm audit fix --package-lock-only` (fixes within existing ranges only). Defaults to a plain re-resolve.',
+        ),
+    },
+    async (args) => {
+      const verdict = await refreshDependencies({
+        bin: ctx.envelopeBin,
+        repo: ctx.repo,
+        auditFix: args.audit_fix,
+      })
+      await journal(ctx, { action: 'refresh_dependencies', auditFix: args.audit_fix ?? false, verdict })
+      return report(state, verdict)
+    },
+  )
+
   const commitTool = tool(
     'commit_changeset',
     "Verify and commit everything staged so far. The envelope runs the outcome's own build over the whole staged tree. If it passes, the changeset lands as one commit (COMMITTED). If it fails, nothing commits and your staged files are kept (BUILD_FAILED) — read the error, stage fixes, and call commit_changeset again. Call this only when you believe the staged set should build.",
@@ -214,7 +237,16 @@ export function buildToolServer(ctx: ToolContext, state: LoopState) {
   const server = createSdkMcpServer({
     name: SERVER_NAME,
     version: '0.1.0',
-    tools: [listSource, readSource, listDirTool, readFileTool, establishTool, proposeWrite, commitTool],
+    tools: [
+      listSource,
+      readSource,
+      listDirTool,
+      readFileTool,
+      establishTool,
+      proposeWrite,
+      refreshDeps,
+      commitTool,
+    ],
   })
 
   return { server }

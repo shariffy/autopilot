@@ -100,6 +100,24 @@ export function resetChangeset(opts: { bin: string; repo: string }): Promise<Ver
   return runEnvelope(opts.bin, ['reset', '--repo', opts.repo])
 }
 
+/**
+ * Refresh dependency resolution with NO `package.json` change (ADR 0009): the
+ * pure-transitive case (`npm audit fix` within existing ranges, or a plain
+ * re-resolve). The brain proposes the operation; the envelope computes the
+ * lockfile — never the brain, and never by writing `package-lock.json` itself
+ * (that write is refused under any clearance; see `invariants::reach`). Stages
+ * the recomputed lockfile into the current changeset; does not commit.
+ */
+export function refreshDependencies(opts: {
+  bin: string
+  repo: string
+  auditFix?: boolean
+}): Promise<Verdict> {
+  const args = ['refresh-deps', '--repo', opts.repo]
+  if (opts.auditFix) args.push('--audit-fix')
+  return runEnvelope(opts.bin, args)
+}
+
 /** A short, human-readable line describing a verdict — for logs and tool results. */
 export function describeVerdict(v: Verdict): string {
   switch (v.outcome) {
