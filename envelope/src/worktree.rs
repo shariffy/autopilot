@@ -19,6 +19,8 @@
 //! so `HEAD` is always the baseline. On green the whole staged tree is committed;
 //! on red it is reset back to `HEAD`. The trusted core keeps no cross-call state.
 
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -53,15 +55,34 @@ pub enum Disposition {
 /// package manager from the lockfile and runs that build, installing dependencies
 /// first only when they are absent (as in a fresh Genesis workspace). The agent
 /// cannot influence which command runs.
-pub struct BuildVerifier;
+///
+/// As of ADR 0009 it is also where dependency maintenance happens: the agent
+/// proposes intent (`package.json`); this is the ONLY place a lockfile is
+/// computed, resolved before install, installed strictly (never mutated) before
+/// build, and checked for newly introduced advisories after build. Resolution,
+/// install, and audit are npm-specific — they compute `package-lock.json`, the
+/// one lockfile the envelope authors regardless of which manager the outcome's
+/// own build script uses; the build step itself keeps the existing multi-manager
+/// detection.
+pub struct BuildVerifier {
+    /// The audit gate's summary from the most recently completed `run`, read by
+    /// `describe` for the commit message. `commit` always calls the two as a
+    /// pair, in that order, on the same instance — simpler than threading an
+    /// extra return value through every call site.
+    last_audit: RefCell<Option<String>>,
+}
 
 impl BuildVerifier {
     /// The verifier for an outcome: its own build, decided from its files.
     pub fn repo_build() -> Self {
-        BuildVerifier
+        BuildVerifier {
+            last_audit: RefCell::new(None),
+        }
     }
 
-    /// The package manager this outcome uses, inferred from its lockfile.
+    /// The package manager the outcome's *build script* runs under, inferred
+    /// from its lockfile. Dependency resolution/install/audit (below) are npm's
+    /// job regardless — this is only about which command runs `build`.
     fn package_manager(repo: &Path) -> &'static str {
         if repo.join("yarn.lock").exists() {
             "yarn"
@@ -87,32 +108,202 @@ impl BuildVerifier {
         }
     }
 
-    fn run(&self, repo: &Path) -> (bool, String) {
-        let pm = Self::package_manager(repo);
+    /// True when this changeset must resolve dependencies before installing:
+    /// its `package.json` intent changed this changeset, or there is no
+    /// lockfile at all yet (the first genesis changeset). Resolution is the
+    /// only path that ever writes `package-lock.json` — the agent cannot
+    /// (`invariants::reach`).
+    fn needs_resolve(repo: &Path, staged: &[String]) -> bool {
+        staged.iter().any(|p| p == "package.json") || !repo.join("package-lock.json").exists()
+    }
+
+    /// True when the on-disk lockfile differs from the one committed at `HEAD`
+    /// (or exists where `HEAD` had none) — the trigger for a strict `npm ci`
+    /// reinstall, so a resolved-but-not-yet-installed change is never verified
+    /// against a stale `node_modules`.
+    fn lockfile_changed_since_head(repo: &Path) -> bool {
+        let current = std::fs::read(repo.join("package-lock.json")).ok();
+        let (ok, head) = git(repo, &["show", "HEAD:package-lock.json"]);
+        if !ok {
+            return current.is_some();
+        }
+        current.as_deref() != Some(head.as_bytes())
+    }
+
+    /// Resolve → install → build → audit, once per changeset (ADR 0005, ADR
+    /// 0009). `staged` is the changeset's own membership so far — resolution
+    /// consults it (was `package.json` part of this changeset's intent?) and,
+    /// on success, extends it: the envelope-computed lockfile becomes an
+    /// explicitly envelope-authored member of THIS changeset, so `commit`'s
+    /// `git add -- <staged>` includes it and it lands in the same commit as the
+    /// manifest change that produced it.
+    fn run(&self, repo: &Path, staged: &[String]) -> (bool, String) {
         let mut log = String::new();
 
-        if Self::needs_install(repo) {
-            let (ok, out) = run_in(repo, pm, &["install"]);
+        // 1. Resolution: the agent's `package.json` is intent, never bytes on
+        // the wire — only the trusted core computes the lockfile from it
+        // (ADR 0009). `--package-lock-only` touches nothing but the lockfile
+        // (no `node_modules`); `--ignore-scripts` means no dependency
+        // lifecycle script runs here, before the agent's write has even
+        // passed the build gate below.
+        if Self::needs_resolve(repo, staged) {
+            let (ok, out) = run_in(
+                repo,
+                "npm",
+                &["install", "--package-lock-only", "--ignore-scripts"],
+            );
+            log.push_str(&out);
+            if !ok {
+                return (false, log);
+            }
+            let _ = record_staged(repo, "package-lock.json");
+        }
+
+        // 2. Install strictly from the lockfile: `npm ci` never mutates it, so
+        // a green build here can never itself be the source of drift the next
+        // changeset would have to explain.
+        if Self::needs_install(repo) || Self::lockfile_changed_since_head(repo) {
+            let (ok, out) = run_in(repo, "npm", &["ci", "--ignore-scripts"]);
             log.push_str(&out);
             if !ok {
                 return (false, log);
             }
         }
 
+        // 3. Build: unchanged multi-manager detection/command.
+        let pm = Self::package_manager(repo);
         let (ok, out) = run_in(repo, pm, Self::build_args(pm));
         log.push_str(&out);
-        (ok, log)
+        if !ok {
+            return (false, log);
+        }
+
+        // 4. Audit: a non-regression gate, not a zero-vulns gate. Pre-existing
+        // findings (already present at `HEAD`) never block — the demo already
+        // carries some; only an advisory THIS changeset newly introduces does.
+        let current = Self::advisory_ids(repo);
+        let baseline = Self::baseline_advisory_ids(repo);
+        let introduced: BTreeSet<i64> = current.difference(&baseline).copied().collect();
+        let summary = format!(
+            "npm audit: {} advisories ({} pre-existing, {} newly introduced{})",
+            current.len(),
+            current.intersection(&baseline).count(),
+            introduced.len(),
+            if introduced.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ": {}",
+                    introduced
+                        .iter()
+                        .map(i64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        );
+        *self.last_audit.borrow_mut() = Some(summary.clone());
+        if !introduced.is_empty() {
+            log.push_str(&format!("\n{summary}\n"));
+            return (false, log);
+        }
+
+        (true, log)
+    }
+
+    /// Advisory IDs `npm audit` reports against the tree as it stands right now
+    /// (post-install, post-build).
+    fn advisory_ids(repo: &Path) -> BTreeSet<i64> {
+        run_capturing_stdout(repo, "npm", &["audit", "--json"])
+            .map(|s| parse_advisory_ids(&s))
+            .unwrap_or_default()
+    }
+
+    /// Advisory IDs at `HEAD`: extract `HEAD:package.json` (and the lockfile,
+    /// if any) into a scratch dir and audit there — cheap
+    /// (`--package-lock-only`, no install, no network beyond the advisory
+    /// lookup itself). No manifest at `HEAD` means the first genesis
+    /// changeset: nothing existed yet to have pre-existing findings, so the
+    /// baseline is empty.
+    fn baseline_advisory_ids(repo: &Path) -> BTreeSet<i64> {
+        let (ok, manifest) = git(repo, &["show", "HEAD:package.json"]);
+        if !ok {
+            return BTreeSet::new();
+        }
+        let tmp = std::env::temp_dir().join(format!(
+            "envelope-audit-baseline-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        if std::fs::create_dir_all(&tmp).is_err() {
+            return BTreeSet::new();
+        }
+        let _ = std::fs::write(tmp.join("package.json"), manifest);
+        let (lock_ok, lockfile) = git(repo, &["show", "HEAD:package-lock.json"]);
+        if lock_ok {
+            let _ = std::fs::write(tmp.join("package-lock.json"), lockfile);
+        }
+        let ids = run_capturing_stdout(&tmp, "npm", &["audit", "--json", "--package-lock-only"])
+            .map(|s| parse_advisory_ids(&s))
+            .unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&tmp);
+        ids
     }
 
     fn describe(&self, repo: &Path) -> String {
         let pm = Self::package_manager(repo);
-        let build = format!("{pm} {}", Self::build_args(pm).join(" "));
-        if Self::needs_install(repo) {
-            format!("{pm} install && {build}")
-        } else {
-            build
+        let mut desc = format!(
+            "npm install --package-lock-only --ignore-scripts && npm ci --ignore-scripts && {pm} {} && npm audit --json",
+            Self::build_args(pm).join(" ")
+        );
+        if let Some(summary) = self.last_audit.borrow().as_ref() {
+            desc.push_str(&format!(" — {summary}"));
+        }
+        desc
+    }
+}
+
+/// Run a command, returning only its stdout, ignoring the exit status. `npm
+/// audit` exits non-zero whenever it finds ANY advisory — an ordinary result
+/// here, not a run failure; the JSON on stdout is what the audit gate judges.
+fn run_capturing_stdout(repo: &Path, program: &str, args: &[&str]) -> Option<String> {
+    Command::new(program)
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Extract advisory IDs from `npm audit --json` output: the numeric `"source"`
+/// field npm assigns each finding inside a `vulnerabilities.*.via[]` entry (it
+/// resolves to a GHSA advisory URL). A targeted string scan, not a JSON parser
+/// — the crate is deliberately zero-dependency (`Cargo.toml`), and the one field
+/// the audit gate needs is stable enough that scanning for it is simpler, and no
+/// less correct, than hand-rolling a parser for a document we otherwise never
+/// look at.
+fn parse_advisory_ids(json: &str) -> BTreeSet<i64> {
+    const KEY: &str = "\"source\"";
+    let mut ids = BTreeSet::new();
+    let mut rest = json;
+    while let Some(idx) = rest.find(KEY) {
+        rest = &rest[idx + KEY.len()..];
+        // Skip the `:` and any whitespace npm's pretty-printed JSON puts before
+        // the value (`npm audit --json` is NOT compact — there is a space after
+        // the colon), so this parses both spacings identically.
+        let digits: String = rest
+            .trim_start_matches(|c: char| c == ':' || c.is_whitespace())
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if let Ok(id) = digits.parse() {
+            ids.insert(id);
         }
     }
+    ids
 }
 
 /// Open a changeset: require a clean work tree so the baseline (`HEAD`) is
@@ -180,8 +371,11 @@ pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Dispositio
         };
     }
 
-    // Verify with the repository's own build — the trusted gate.
-    let (passed, output) = verifier.run(repo);
+    // Verify with the repository's own build — the trusted gate. Resolution
+    // (inside `run`) may itself extend the changeset's membership with an
+    // envelope-computed lockfile (ADR 0009), so `staged` is re-read below
+    // rather than reused from above.
+    let (passed, output) = verifier.run(repo, &staged);
     if !passed {
         // Leave the staged tree as-is: nothing is committed, so `HEAD` is still
         // the clean baseline, and the agent can fix the offending file and retry
@@ -190,12 +384,18 @@ pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Dispositio
             detail: tail(&output, 1600),
         };
     }
+    let staged = match staged_paths(repo) {
+        Ok(paths) => paths,
+        Err(reason) => return Disposition::Refused { reason },
+    };
 
     // Commit exactly what this changeset staged — never `add -A`. The commit's
     // contents must equal the adjudicated set, or the attributable-changeset claim
     // is empty: anything else in the tree (a leftover from an earlier changeset
     // whose build went red) would ride along under an intent that never covered it
-    // and a verification that never judged it.
+    // and a verification that never judged it. (The lockfile above is not an
+    // exception: it is a member the ENVELOPE recorded, adjudicated by the same
+    // build+audit gate as everything else in this commit.)
     let message = format!(
         "{intent}\n\n[envelope] verified by `{}`",
         verifier.describe(repo)
@@ -220,6 +420,52 @@ pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Dispositio
         .to_string();
     close_changeset(repo);
     Disposition::Committed { commit }
+}
+
+/// The pure-transitive dependency-maintenance operation (ADR 0009): re-resolve
+/// the lockfile (or, with `audit_fix`, run `npm audit fix --package-lock-only`
+/// — a fix entirely within the ranges `package.json` already allows) with no
+/// `package.json` change at all, and fold the result into the open changeset.
+/// Still trusted-core compute, never the agent's — `invariants::reach` refuses
+/// an agent-authored lockfile under any clearance regardless of how this
+/// function is invoked.
+///
+/// Stages the lockfile only; it does not itself verify or commit. The caller
+/// (`commit`) still runs the full resolve→install→build→audit gate over the
+/// result, exactly as for any other staged change — this just computes the one
+/// artifact the agent cannot author itself and records it as a changeset member.
+///
+/// Opens a changeset if none is open yet (mirrors `stage`'s auto-open), so a
+/// pure lockfile refresh can be the first and only operation of its changeset.
+pub fn refresh_dependencies(repo: &Path, audit_fix: bool) -> Disposition {
+    if !changeset_is_open(repo) {
+        if let Err(reason) = ensure_clean(repo) {
+            return Disposition::Refused { reason };
+        }
+        if let Err(reason) = open_changeset(repo) {
+            return Disposition::Refused { reason };
+        }
+    }
+
+    let args: &[&str] = if audit_fix {
+        &["audit", "fix", "--package-lock-only", "--ignore-scripts"]
+    } else {
+        &["install", "--package-lock-only", "--ignore-scripts"]
+    };
+    let (ok, out) = run_in(repo, "npm", args);
+    if !ok {
+        return Disposition::Refused {
+            reason: format!("dependency refresh failed: {}", tail(&out, 800)),
+        };
+    }
+
+    if let Err(reason) = record_staged(repo, "package-lock.json") {
+        return Disposition::Refused { reason };
+    }
+
+    Disposition::Staged {
+        path: "package-lock.json".to_string(),
+    }
 }
 
 /// Adjudicate a single proposed write: the one-stage changeset. Kept as a
@@ -280,18 +526,18 @@ pub fn establish(workspace: &Path, mode: Establish, verifier: &BuildVerifier) ->
 /// Build products and machine-local noise: never part of a changeset, so the
 /// commit stays the adjudicated set and nothing else.
 ///
-/// Lockfiles are here because the *verifier* writes them, not the agent: `install`
-/// runs inside the trusted gate, after staging has closed. An unignored lockfile is
-/// therefore residue the agent never proposed and cannot stage — and it would leave
-/// the tree dirty, so the next `begin` would refuse and the run would wedge after a
-/// single changeset. Ignored, they still sit on disk for package-manager detection.
+/// `package-lock.json` is deliberately NOT here (ADR 0009): it is now tracked.
+/// The trusted core, not the agent, computes it — from the agent's `package.json`
+/// intent, during verification — and folds it into the changeset that produced
+/// it (`BuildVerifier::run` records it as a changeset member; `reach.rs` refuses
+/// the agent's own write of one under any clearance). A tracked, envelope-authored
+/// lockfile belongs in history like any other envelope-authored artifact.
+/// `node_modules/`, build output, and machine-local files remain ignored: they
+/// are reproducible from the lockfile and would only ever be residue.
 const BASELINE_IGNORES: &str = concat!(
     "node_modules/\n",
     "dist/\n",
     "build/\n",
-    "package-lock.json\n",
-    "pnpm-lock.yaml\n",
-    "yarn.lock\n",
     ".DS_Store\n",
     "*.log\n",
 );
@@ -343,7 +589,9 @@ fn establish_clone(workspace: &Path, source: &Path, verifier: &BuildVerifier) ->
     }
     // Adoption precondition: the predecessor must build green as-is, or reverting a
     // future change has no sound baseline to return to. Verify before adopting.
-    let (passed, output) = verifier.run(workspace);
+    // No changeset is open here (adoption precedes one), so this is an empty
+    // staged set — resolution still runs if the predecessor has no lockfile.
+    let (passed, output) = verifier.run(workspace, &[]);
     if !passed {
         let _ = std::fs::remove_dir_all(workspace);
         return Disposition::Refused {
@@ -505,5 +753,36 @@ pub fn resolve_new_repo(raw: &str) -> PathBuf {
         p
     } else {
         std::env::current_dir().map(|c| c.join(&p)).unwrap_or(p)
+    }
+}
+
+#[cfg(test)]
+mod audit_parsing_tests {
+    use super::parse_advisory_ids;
+
+    #[test]
+    fn extracts_every_source_id_in_document_order_deduplicated() {
+        let json = r#"{"vulnerabilities":{"minimatch":{"via":[
+            {"source":1093710,"severity":"high"},
+            {"source":1096485,"severity":"high"},
+            {"source":1093710,"severity":"high"}
+        ]}}}"#;
+        let ids: Vec<i64> = parse_advisory_ids(json).into_iter().collect();
+        assert_eq!(ids, vec![1093710, 1096485]);
+    }
+
+    #[test]
+    fn extracts_ids_from_npms_actual_pretty_printed_spacing() {
+        // `npm audit --json` is NOT compact JSON — it puts a space after every
+        // `:`. This is the exact shape that broke a first version of the parser.
+        let json = "{\n  \"source\": 1093710,\n  \"severity\": \"high\"\n}";
+        let ids: Vec<i64> = parse_advisory_ids(json).into_iter().collect();
+        assert_eq!(ids, vec![1093710]);
+    }
+
+    #[test]
+    fn no_findings_is_an_empty_set() {
+        let json = r#"{"vulnerabilities":{},"metadata":{"vulnerabilities":{"total":0}}}"#;
+        assert!(parse_advisory_ids(json).is_empty());
     }
 }

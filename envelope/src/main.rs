@@ -128,6 +128,9 @@ fn main() -> ExitCode {
         Some("begin") => cmd_begin(&args[2..]),
         Some("stage") => cmd_stage(&args[2..]),
         Some("commit") => cmd_commit(&args[2..]),
+        // Pure-transitive dependency maintenance: envelope-computed lockfile
+        // refresh, no `package.json` change (ADR 0009).
+        Some("refresh-deps") => cmd_refresh_deps(&args[2..]),
         // Abandon an open changeset: reset the tree to the clean baseline.
         Some("reset") => cmd_reset(&args[2..]),
         Some(other) => {
@@ -314,6 +317,31 @@ fn cmd_commit(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Pure-transitive dependency maintenance (ADR 0009): re-resolve the lockfile
+/// (or, with `--audit-fix`, apply `npm audit fix` within existing ranges) with
+/// no `package.json` change, and fold the result into the open changeset.
+/// Still trusted-core compute — the agent proposes the operation; it never
+/// authors the lockfile itself (`invariants::reach`).
+fn cmd_refresh_deps(args: &[String]) -> ExitCode {
+    let mut flags = Flags::default();
+    if let Err(code) = flags.parse(args) {
+        return code;
+    }
+    let Some(repo_raw) = flags.repo else {
+        emit_error("usage: envelope refresh-deps --repo <dir> [--audit-fix]");
+        return ExitCode::from(2);
+    };
+    let repo = match worktree::resolve_repo(&repo_raw) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("repo `{repo_raw}` not found: {e}"));
+            return ExitCode::from(2);
+        }
+    };
+    emit_disposition("", &worktree::refresh_dependencies(&repo, flags.audit_fix));
+    ExitCode::SUCCESS
+}
+
 /// Establish a fresh workspace baseline from the agent's chosen starting-point.
 fn cmd_establish(args: &[String]) -> ExitCode {
     let mut flags = Flags::default();
@@ -387,6 +415,10 @@ struct Flags {
     clearance: Option<String>,
     mode: Option<String>,
     source: Option<String>,
+    /// `refresh-deps` only: `npm audit fix` within existing ranges, rather than
+    /// a plain re-resolve. A bare flag (no value), so it is parsed separately
+    /// from the `--flag value` pairs below.
+    audit_fix: bool,
 }
 
 impl Flags {
@@ -394,6 +426,11 @@ impl Flags {
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
+                "--audit-fix" => {
+                    self.audit_fix = true;
+                    i += 1;
+                    continue;
+                }
                 "--repo" => self.repo = args.get(i + 1).cloned(),
                 "--path" => self.path = args.get(i + 1).cloned(),
                 "--intent" => self.intent = args.get(i + 1).cloned(),
