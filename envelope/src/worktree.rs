@@ -33,10 +33,14 @@ const ADVISOR_IDENT: (&str, &str) = ("Autopilot advisor", "advisor@autopilot.inv
 
 /// The identity stamped as **committer** on every commit the envelope makes, and
 /// as **author** too wherever the envelope itself is the sole author of the work
-/// (the `establish` baseline — trusted setup, not the advisor's proposal). The
+/// (the `establish` baseline — trusted setup, not the advisor's proposal; the
+/// runtime trip's revert — pure envelope action, no advisor input at all). The
 /// trusted core commits everything; this says so on every commit, hermetically,
-/// regardless of the host's ambient git config (ADR 0010).
-const ENVELOPE_IDENT: (&str, &str) = ("Autopilot envelope", "envelope@autopilot.invalid");
+/// regardless of the host's ambient git config (ADR 0010). `pub(crate)` so
+/// [`crate::runtime`]'s trip can stamp its revert with the same identity rather
+/// than inventing its own.
+pub(crate) const ENVELOPE_IDENT: (&str, &str) =
+    ("Autopilot envelope", "envelope@autopilot.invalid");
 
 /// What actually happened, mirroring [`crate::types::Outcome`] but carrying the
 /// real-world evidence (a commit hash, a build-failure tail) the caller needs.
@@ -111,6 +115,25 @@ impl BuildVerifier {
     /// absent in a freshly created one.
     fn needs_install(repo: &Path) -> bool {
         !repo.join("node_modules").exists()
+    }
+
+    /// True when the outcome's `package.json` declares a `test` script — the
+    /// signal that it has a test setup at all. Absence is not a failure: not
+    /// every outcome has tests yet (a fresh Genesis workspace never does before
+    /// its first changeset), so the test stage is skipped rather than treated as
+    /// a build failure. A targeted scan, not a JSON parser, mirroring
+    /// `parse_advisory_ids` — brace-matches the `scripts` object, then looks for
+    /// an exact `"test"` key inside it, so a script *named* `test:watch` (which
+    /// contains `"test` as a substring but not the exact key `"test"`) does not
+    /// produce a false positive.
+    fn has_test_script(repo: &Path) -> bool {
+        let Ok(manifest) = std::fs::read_to_string(repo.join("package.json")) else {
+            return false;
+        };
+        let Some(scripts) = json_object(&manifest, "scripts") else {
+            return false;
+        };
+        scripts.contains("\"test\"")
     }
 
     /// `npm`/`pnpm` need `run` before a script; `yarn build` is direct.
@@ -190,6 +213,25 @@ impl BuildVerifier {
         log.push_str(&out);
         if !ok {
             return (false, log);
+        }
+
+        // 3.5. Test: partially discharges R7 (THREAT_MODEL.md) — "the page
+        // actually works" becomes part of the gate, not just "the code
+        // compiles". A build-green change can still crash at runtime (a `!`
+        // assertion the type checker cannot see through, a dangling lookup);
+        // the outcome's own test suite is where that shows up. Only runs when
+        // the outcome HAS a `test` script — an outcome with none is not
+        // penalised for a stage it never opted into, so this stays additive
+        // rather than a new precondition every outcome must satisfy. No
+        // `--ignore-scripts` here: unlike resolve/install (which touch a
+        // lockfile before the agent's write has even passed the build gate),
+        // `npm test` running the outcome's own lifecycle script IS the point.
+        if Self::has_test_script(repo) {
+            let (ok, out) = run_in(repo, pm, &["test"]);
+            log.push_str(&out);
+            if !ok {
+                return (false, log);
+            }
         }
 
         // 4. Audit: a non-regression gate, not a zero-vulns gate. Pre-existing
@@ -289,9 +331,13 @@ impl BuildVerifier {
     fn describe(&self, repo: &Path) -> String {
         let pm = Self::package_manager(repo);
         let mut desc = format!(
-            "npm install --package-lock-only --ignore-scripts && npm ci --ignore-scripts && {pm} {} && npm audit --json",
+            "npm install --package-lock-only --ignore-scripts && npm ci --ignore-scripts && {pm} {}",
             Self::build_args(pm).join(" ")
         );
+        if Self::has_test_script(repo) {
+            desc.push_str(&format!(" && {pm} test"));
+        }
+        desc.push_str(" && npm audit --json");
         if let Some(summary) = self.last_audit.borrow().as_ref() {
             desc.push_str(&format!(" — {summary}"));
         }
@@ -337,6 +383,33 @@ fn parse_advisory_ids(json: &str) -> BTreeSet<i64> {
         }
     }
     ids
+}
+
+/// Extract the substring spanning a top-level JSON object value for `key` in
+/// `json` (e.g. `"scripts": { ... }`), by brace-counting from the first `{`
+/// after the key — `None` if the key or a well-formed object is not found.
+/// Shared groundwork for `BuildVerifier::has_test_script`; a targeted scan, not
+/// a JSON parser, for the same zero-dependency reason as `parse_advisory_ids`.
+fn json_object<'a>(json: &'a str, key: &str) -> Option<&'a str> {
+    let pat = format!("\"{key}\"");
+    let key_idx = json.find(&pat)?;
+    let after_key = &json[key_idx + pat.len()..];
+    let brace_offset = after_key.find('{')?;
+    let start = key_idx + pat.len() + brace_offset;
+    let mut depth: i32 = 0;
+    for (i, c) in json[start..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&json[start..start + i + 1]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Open a changeset: require a clean work tree so the baseline (`HEAD`) is
@@ -679,7 +752,7 @@ fn is_nonempty_dir(path: &Path) -> bool {
 /// A run wedged permanently on residue the trusted core had created itself. Sound
 /// liveness here also stops correctness from resting on `.gitignore`, which is
 /// inside the agent's reach and which it will rewrite for its own stack.
-fn ensure_clean(repo: &Path) -> Result<(), String> {
+pub(crate) fn ensure_clean(repo: &Path) -> Result<(), String> {
     if !git(repo, &["rev-parse", "--is-inside-work-tree"]).0 {
         return Err(format!("`{}` is not a git work tree", repo.display()));
     }
@@ -762,7 +835,7 @@ pub fn reset(repo: &Path) {
 }
 
 /// Run a git subcommand in `repo`, returning (success, combined stdout+stderr).
-fn git(repo: &Path, args: &[&str]) -> (bool, String) {
+pub(crate) fn git(repo: &Path, args: &[&str]) -> (bool, String) {
     run_in(repo, "git", args)
 }
 
@@ -774,7 +847,7 @@ fn git(repo: &Path, args: &[&str]) -> (bool, String) {
 /// hermetically, regardless of what runs the envelope. Used only for the git
 /// subcommands that actually create a commit; every other git call keeps using
 /// `git`, which carries no opinion about identity because it never needs one.
-fn git_commit_as(
+pub(crate) fn git_commit_as(
     repo: &Path,
     args: &[&str],
     author: (&str, &str),

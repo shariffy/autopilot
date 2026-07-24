@@ -76,7 +76,21 @@ const FORBIDDEN_WRITE_PREFIXES: &[&str] = &[
     "secrets/",  // credentials must never be written into the frontend bundle
     "infra/",    // build and deploy pipeline configuration
     "envelope/", // the trusted core may not be edited by the agent it governs
+    "tests/contract/", // the frozen reproducer oracle (ADR 0011) — see FROZEN_ORACLE_PREFIX below
 ];
+
+/// The frozen oracle zone (ADR 0011): the reproducer test that judges whether a
+/// fix actually resolves the runtime crash it targets. Its authority comes from
+/// being seeded from telemetry evidence, not from the agent's own claim of
+/// correctness — so the agent must never be able to author or edit it, under
+/// **any** clearance, exactly like [`NEVER_WRITE_PREFIXES`]. Kept as its own
+/// constant and checked explicitly in both `check_genesis` and
+/// `check_maintenance` (mirroring how `NEVER_WRITE_PREFIXES` is applied)
+/// rather than folded into that list, so a denial names the specific reason —
+/// "the frozen oracle", not "credentials" or "version history". Ordinary tests
+/// elsewhere under `tests/` (e.g. `tests/unit/`) are NOT covered by this and
+/// follow the normal rules for whatever clearance is in force.
+const FROZEN_ORACLE_PREFIX: &str = "tests/contract/";
 
 /// Zones that are never the agent's to touch under *any* clearance — even the broad
 /// Genesis clearance is confined to the workspace minus these.
@@ -110,6 +124,9 @@ impl Clearance {
         if let Some(v) = never_write_file_violation(path, normalized) {
             return vec![v];
         }
+        if let Some(v) = frozen_oracle_violation(path, normalized) {
+            return vec![v];
+        }
         if NEVER_WRITE_PREFIXES
             .iter()
             .any(|p| normalized.starts_with(p))
@@ -124,6 +141,9 @@ impl Clearance {
 
     fn check_maintenance(self, path: &str, normalized: &str) -> Vec<Violation> {
         if let Some(v) = never_write_file_violation(path, normalized) {
+            return vec![v];
+        }
+        if let Some(v) = frozen_oracle_violation(path, normalized) {
             return vec![v];
         }
 
@@ -164,6 +184,23 @@ fn never_write_file_violation(path: &str, normalized: &str) -> Option<Violation>
             invariant: "reach",
             reason: format!(
                 "`{path}` is a lockfile: computed by the trusted core from `package.json`, never authored by the agent"
+            ),
+        })
+    } else {
+        None
+    }
+}
+
+/// The reach denial for the frozen oracle zone, or `None` if `normalized` is
+/// not inside it. Shared by `check_genesis` and `check_maintenance` so the
+/// rule reads identically — and is enforced identically — under every
+/// clearance, the same shape as `never_write_file_violation`.
+fn frozen_oracle_violation(path: &str, normalized: &str) -> Option<Violation> {
+    if normalized.starts_with(FROZEN_ORACLE_PREFIX) {
+        Some(Violation {
+            invariant: "reach",
+            reason: format!(
+                "`{path}` is the frozen reproducer oracle: judged by telemetry evidence, never authored or edited by the agent, under any clearance"
             ),
         })
     } else {
@@ -340,6 +377,37 @@ mod tests {
     }
 
     #[test]
+    fn frozen_oracle_is_rejected_under_every_clearance() {
+        // The reproducer test is the correctness oracle (ADR 0011): the agent
+        // must never author or edit it, under either clearance.
+        let m = maintenance("tests/contract/reproducer.test.ts");
+        assert!(!m.is_empty(), "maintenance accepted the frozen oracle");
+        assert!(
+            m[0].reason.contains("frozen reproducer oracle"),
+            "reason should name the real cause: {:?}",
+            m[0].reason
+        );
+
+        let g = genesis("tests/contract/reproducer.test.ts");
+        assert!(!g.is_empty(), "genesis accepted the frozen oracle");
+        assert!(
+            g[0].reason.contains("frozen reproducer oracle"),
+            "reason should name the real cause: {:?}",
+            g[0].reason
+        );
+    }
+
+    #[test]
+    fn ordinary_tests_outside_contract_follow_the_normal_rules() {
+        // Only tests/contract/ is frozen. A test elsewhere under tests/ is an
+        // ordinary path, governed by each clearance's normal rules: outside
+        // Maintenance's allowlist (rejected, same as any other non-allowlisted
+        // path), inside Genesis's broad reach (allowed).
+        assert!(!maintenance("tests/unit/foo.test.ts").is_empty());
+        assert!(genesis("tests/unit/foo.test.ts").is_empty());
+    }
+
+    #[test]
     fn lockfile_backup_files_are_ordinary_files() {
         // Exact-match again: a `.bak` sibling of a lockfile is not itself a
         // lockfile, so it is governed by the normal allow/forbid rules only.
@@ -364,6 +432,9 @@ mod tests {
             "infra",
             "docs",
             "adr",
+            "tests",
+            "contract",
+            "unit",
             "x",
             "..",
             ".",
@@ -392,6 +463,10 @@ mod tests {
                     !NEVER_WRITE_FILES.iter().any(|f| norm == *f),
                     "maintenance accepted a lockfile: {path:?} -> {norm:?}"
                 );
+                assert!(
+                    !norm.starts_with(FROZEN_ORACLE_PREFIX),
+                    "maintenance accepted but resolves into the frozen oracle zone: {path:?} -> {norm:?}"
+                );
             }
             if genesis(&path).is_empty() {
                 let norm = normalize(&path).expect("an accepted path must normalise");
@@ -402,6 +477,10 @@ mod tests {
                 assert!(
                     !NEVER_WRITE_FILES.iter().any(|f| norm == *f),
                     "genesis accepted a lockfile: {path:?} -> {norm:?}"
+                );
+                assert!(
+                    !norm.starts_with(FROZEN_ORACLE_PREFIX),
+                    "genesis accepted but resolves into the frozen oracle zone: {path:?} -> {norm:?}"
                 );
             }
         }

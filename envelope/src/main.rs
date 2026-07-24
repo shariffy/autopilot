@@ -12,6 +12,7 @@ mod harness;
 mod invariants;
 mod policy;
 mod reversible;
+mod runtime;
 mod telemetry;
 mod types;
 mod verifier;
@@ -133,6 +134,9 @@ fn main() -> ExitCode {
         Some("refresh-deps") => cmd_refresh_deps(&args[2..]),
         // Abandon an open changeset: reset the tree to the clean baseline.
         Some("reset") => cmd_reset(&args[2..]),
+        // The runtime envelope's fast loop (ADR 0011): read trusted telemetry,
+        // revert the deployed change on an error-rate breach. No advisor input.
+        Some("monitor") => cmd_monitor(&args[2..]),
         Some(other) => {
             eprintln!("unknown subcommand `{other}`; run with no arguments for the showcase");
             ExitCode::from(2)
@@ -406,6 +410,43 @@ fn cmd_reset(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The runtime envelope's fast loop (ADR 0011): read trusted telemetry for the
+/// currently-deployed change and, on an error-rate breach, revert it —
+/// stamped as the envelope's own action. Takes NO advisor input: there is no
+/// `--intent`, no proposal, nothing supplied by the agent — only a repo and a
+/// telemetry file the agent does not control.
+fn cmd_monitor(args: &[String]) -> ExitCode {
+    let mut flags = Flags::default();
+    if let Err(code) = flags.parse(args) {
+        return code;
+    }
+    let (Some(repo_raw), Some(telemetry_raw)) = (flags.repo, flags.telemetry) else {
+        emit_error("usage: envelope monitor --repo <dir> --telemetry <file> [--threshold <float>]");
+        return ExitCode::from(2);
+    };
+    let repo = match worktree::resolve_repo(&repo_raw) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("repo `{repo_raw}` not found: {e}"));
+            return ExitCode::from(2);
+        }
+    };
+    let threshold = match flags.threshold {
+        Some(raw) => match raw.parse::<f64>() {
+            Ok(v) => Some(v),
+            Err(_) => {
+                emit_error(&format!("`--threshold {raw}` is not a valid number"));
+                return ExitCode::from(2);
+            }
+        },
+        None => None,
+    };
+
+    let disposition = runtime::monitor(&repo, std::path::Path::new(&telemetry_raw), threshold);
+    emit_monitor_disposition(&disposition);
+    ExitCode::SUCCESS
+}
+
 /// Flags shared by the changeset commands. Each command validates which it needs.
 #[derive(Default)]
 struct Flags {
@@ -419,6 +460,10 @@ struct Flags {
     /// a plain re-resolve. A bare flag (no value), so it is parsed separately
     /// from the `--flag value` pairs below.
     audit_fix: bool,
+    /// `monitor` only: path to the trusted telemetry file.
+    telemetry: Option<String>,
+    /// `monitor` only: override the telemetry file's own `threshold`.
+    threshold: Option<String>,
 }
 
 impl Flags {
@@ -437,6 +482,8 @@ impl Flags {
                 "--clearance" => self.clearance = args.get(i + 1).cloned(),
                 "--mode" => self.mode = args.get(i + 1).cloned(),
                 "--source" => self.source = args.get(i + 1).cloned(),
+                "--telemetry" => self.telemetry = args.get(i + 1).cloned(),
+                "--threshold" => self.threshold = args.get(i + 1).cloned(),
                 other => {
                     emit_error(&format!("unknown flag `{other}`"));
                     return Err(ExitCode::from(2));
@@ -478,6 +525,27 @@ fn emit_disposition(path: &str, d: &Disposition) {
         Disposition::Refused { reason } => println!(
             "{{\"outcome\":\"refused\",\"path\":{},\"reason\":{}}}",
             json_str(path),
+            json_str(reason)
+        ),
+    }
+}
+
+fn emit_monitor_disposition(d: &runtime::Disposition) {
+    match d {
+        runtime::Disposition::Tripped {
+            reverted_to,
+            detail,
+        } => println!(
+            "{{\"outcome\":\"tripped\",\"reverted_to\":{},\"detail\":{}}}",
+            json_str(reverted_to),
+            json_str(detail)
+        ),
+        runtime::Disposition::Nominal { detail } => println!(
+            "{{\"outcome\":\"nominal\",\"detail\":{}}}",
+            json_str(detail)
+        ),
+        runtime::Disposition::Refused { reason } => println!(
+            "{{\"outcome\":\"refused\",\"reason\":{}}}",
             json_str(reason)
         ),
     }
