@@ -109,7 +109,11 @@ export async function runLoop(opts: {
     prompt: opts.task,
     options: {
       systemPrompt: system,
-      model: 'claude-opus-4-8',
+      // The brain is untrusted, so its model is a cost/quality knob, not a trust
+      // input — a non-frontier model landing green changesets through the envelope
+      // is the thesis, not a weakness. Sonnet 4.6 is the default on cost-per-task
+      // grounds; override with ADVISOR_MODEL for a one-off.
+      model: process.env.ADVISOR_MODEL ?? 'claude-sonnet-4-6',
       mcpServers: { [SERVER_NAME]: server },
       // Pre-approve our tools; strip every built-in so the brain has no path to
       // the filesystem except through the envelope-backed MCP tools.
