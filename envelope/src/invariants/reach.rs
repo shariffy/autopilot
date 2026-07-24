@@ -40,6 +40,26 @@ const ALLOWED_WRITE_PREFIXES: &[&str] = &[
     "config/flags/",
 ];
 
+/// Exact-match filenames the agent may write under Maintenance — checked by
+/// equality, never by prefix, because `ALLOWED_WRITE_PREFIXES` is
+/// prefix-matched and a prefix rule for `package.json` would wrongly admit
+/// `package.json.bak` too. The agent proposes dependency *intent* here; the
+/// envelope computes the lockfile from it (see `NEVER_WRITE_FILES` and
+/// `docs/adr/0009-dependency-maintenance.md`).
+const ALLOWED_WRITE_FILES: &[&str] = &["package.json"];
+
+/// Lockfiles: never the agent's to author, under **any** clearance — not even
+/// the broad Genesis one. A lockfile's `resolved` URL and `integrity` hash are
+/// attacker-controllable *as a pair* (npm binds integrity to whatever was
+/// downloaded, not to the registry's published artifact), and installing from
+/// one runs dependency lifecycle scripts inside the envelope's own verifier, on
+/// the host. The trusted core computes these from the agent's `package.json`
+/// intent instead (`worktree::BuildVerifier`); expressive power costs nothing —
+/// ranges, `overrides`, and exact pins are all sayable in `package.json`.
+/// Exact-match, like `ALLOWED_WRITE_FILES`: a `package-lock.json.bak` is an
+/// ordinary file governed by the normal rules, not this one.
+const NEVER_WRITE_FILES: &[&str] = &["package-lock.json", "pnpm-lock.yaml", "yarn.lock"];
+
 /// Prefixes that are never writable under Maintenance, listed explicitly so the
 /// most sensitive zones are obvious to an auditor even though deny-by-default
 /// already covers them.
@@ -79,6 +99,9 @@ impl Clearance {
     }
 
     fn check_genesis(self, path: &str, normalized: &str) -> Vec<Violation> {
+        if let Some(v) = never_write_file_violation(path, normalized) {
+            return vec![v];
+        }
         if NEVER_WRITE_PREFIXES
             .iter()
             .any(|p| normalized.starts_with(p))
@@ -92,6 +115,10 @@ impl Clearance {
     }
 
     fn check_maintenance(self, path: &str, normalized: &str) -> Vec<Violation> {
+        if let Some(v) = never_write_file_violation(path, normalized) {
+            return vec![v];
+        }
+
         if FORBIDDEN_WRITE_PREFIXES
             .iter()
             .any(|p| normalized.starts_with(p))
@@ -100,6 +127,10 @@ impl Clearance {
                 invariant: "reach",
                 reason: format!("`{path}` resolves into an explicitly forbidden zone"),
             }];
+        }
+
+        if ALLOWED_WRITE_FILES.iter().any(|f| normalized == *f) {
+            return vec![];
         }
 
         if !ALLOWED_WRITE_PREFIXES
@@ -113,6 +144,22 @@ impl Clearance {
         }
 
         vec![]
+    }
+}
+
+/// The reach denial for a lockfile, or `None` if `normalized` is not one.
+/// Shared by `check_genesis` and `check_maintenance` so the rule reads
+/// identically — and is enforced identically — under every clearance.
+fn never_write_file_violation(path: &str, normalized: &str) -> Option<Violation> {
+    if NEVER_WRITE_FILES.iter().any(|f| normalized == *f) {
+        Some(Violation {
+            invariant: "reach",
+            reason: format!(
+                "`{path}` is a lockfile: computed by the trusted core from `package.json`, never authored by the agent"
+            ),
+        })
+    } else {
+        None
     }
 }
 
@@ -211,6 +258,50 @@ mod tests {
         assert!(genesis(".gitignore").is_empty());
     }
 
+    #[test]
+    fn maintenance_allows_package_json_by_exact_match() {
+        // The dependency-intent surface (ADR 0009): the agent may propose
+        // `package.json` changes even though maintenance's prefix allowlist
+        // otherwise covers only `src/`/`config/flags/`.
+        assert!(maintenance("package.json").is_empty());
+    }
+
+    #[test]
+    fn maintenance_forbids_package_json_bak_despite_the_exact_match_allowlist() {
+        // Proves the allowlist is exact-match, not a prefix: a real prefix rule
+        // for `package.json` would wrongly admit this too.
+        assert!(!maintenance("package.json.bak").is_empty());
+    }
+
+    #[test]
+    fn lockfiles_are_never_writable_under_any_clearance() {
+        for name in ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"] {
+            let m = maintenance(name);
+            assert!(!m.is_empty(), "maintenance accepted a lockfile: {name}");
+            assert!(
+                m[0].reason.contains("computed by the trusted core"),
+                "reason should name the real cause: {:?}",
+                m[0].reason
+            );
+
+            let g = genesis(name);
+            assert!(!g.is_empty(), "genesis accepted a lockfile: {name}");
+            assert!(
+                g[0].reason.contains("computed by the trusted core"),
+                "reason should name the real cause: {:?}",
+                g[0].reason
+            );
+        }
+    }
+
+    #[test]
+    fn lockfile_backup_files_are_ordinary_files() {
+        // Exact-match again: a `.bak` sibling of a lockfile is not itself a
+        // lockfile, so it is governed by the normal allow/forbid rules only.
+        assert!(!maintenance("package-lock.json.bak").is_empty()); // outside allowlist, not a lockfile denial
+        assert!(genesis("package-lock.json.bak").is_empty()); // genesis' broad clearance covers it
+    }
+
     /// Exhaustive check over every path up to length 4 built from a small alphabet
     /// that mixes `.`/`..` with allowed and forbidden segments: under *each*
     /// clearance, every *accepted* path, once normalised, must stay within that
@@ -227,6 +318,11 @@ mod tests {
             "x",
             "..",
             ".",
+            "package.json",
+            "package.json.bak",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
         ];
         let mut paths = Vec::new();
         enumerate(TOKENS, 4, &mut Vec::new(), &mut paths);
@@ -235,12 +331,17 @@ mod tests {
             if maintenance(&path).is_empty() {
                 let norm = normalize(&path).expect("an accepted path must normalise");
                 assert!(
-                    ALLOWED_WRITE_PREFIXES.iter().any(|p| norm.starts_with(p)),
+                    ALLOWED_WRITE_PREFIXES.iter().any(|p| norm.starts_with(p))
+                        || ALLOWED_WRITE_FILES.iter().any(|f| norm == *f),
                     "maintenance accepted but not in allowlist: {path:?} -> {norm:?}"
                 );
                 assert!(
                     !FORBIDDEN_WRITE_PREFIXES.iter().any(|p| norm.starts_with(p)),
                     "maintenance accepted but resolves into a forbidden zone: {path:?} -> {norm:?}"
+                );
+                assert!(
+                    !NEVER_WRITE_FILES.iter().any(|f| norm == *f),
+                    "maintenance accepted a lockfile: {path:?} -> {norm:?}"
                 );
             }
             if genesis(&path).is_empty() {
@@ -248,6 +349,10 @@ mod tests {
                 assert!(
                     !NEVER_WRITE_PREFIXES.iter().any(|p| norm.starts_with(p)),
                     "genesis accepted but resolves into a never-writable zone: {path:?} -> {norm:?}"
+                );
+                assert!(
+                    !NEVER_WRITE_FILES.iter().any(|f| norm == *f),
+                    "genesis accepted a lockfile: {path:?} -> {norm:?}"
                 );
             }
         }
