@@ -110,10 +110,15 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
   A5).** The in-memory harness seeds a stub; the real `adjudicate` path runs the
   repo's own `npm run build` (typecheck + bundle) inside the monitor, so the
   typecheck/compile half of T3 is genuinely enforced and the agent cannot
-  self-certify. What remains is **agentic UI verification** — actually driving the
-  rendered page to confirm a change works. This is the load-bearing piece for a
-  frontend: most residual risk is visual/UX regressions that compile cleanly but
-  break the page, which only UI verification catches.
+  self-certify. **ADR 0011 narrows this from both ends** (T13): a *test stage* now
+  runs the outcome's own `npm test` after the build, so a compile-clean change that
+  breaks a tested path fails the changeset pre-commit; and a *runtime trip*
+  auto-reverts a deployed change whose telemetry error rate breaches the SLO, no
+  model in the loop. What remains open is the *general* case — agentic UI
+  verification of arbitrary rendered behaviour a seeded reproducer does not cover,
+  and the fact that a wrong-answer (non-throwing) fault still needs a human to say
+  what correct is. Most residual frontend risk is visual/UX regressions that
+  compile and pass existing tests but still look or behave wrong.
 - **R8 — The verifier executes the repo's build (new TCB surface).** Running
   `npm run build` executes whatever the build pipeline does on the host. The build
   *definition* is protected — `package.json` is writable only as manifest intent,

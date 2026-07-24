@@ -134,11 +134,13 @@ changeset that introduces a new advisory is refused, one that leaves pre-existin
 findings unchanged is not — each demonstrated by a real-`npm` integration test in
 `tests/worktree_lifecycle.rs`.
 
-## Phase B — Sensor-driven maintenance (infrastructure landed, run pending)
+## Phase B — Sensor-driven maintenance (done)
 
-**Status: infrastructure landed 2026-07-24; the advisor has not yet been run
-against it.** M1 proved genesis end to end; every milestone since has hardened
-that path. Phase B is the first exercise of the *other* clearance ADR 0005
+**Status: done 2026-07-24.** The advisor ran on Sonnet 4.6 against the maintained
+app, read a PostHog analytics signal, and landed one green, bounded maintenance
+changeset (sortable Product columns) inside the reach allowlist — advisor-authored,
+envelope-committed, with an ADR — for $0.26. Published to the demo repo. M1 proved
+genesis end to end; every milestone since has hardened that path. Phase B is the first exercise of the *other* clearance ADR 0005
 named but M1 never used: Maintenance, against an outcome that already exists and
 already builds, driven by a sensor rather than a human requirement.
 
