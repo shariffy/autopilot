@@ -28,6 +28,16 @@ $0.96 over 53 turns. See [docs/runs/0001-first-light.md](runs/0001-first-light.m
 Everything below was ordered around producing that run; it now hardens the pieces
 it leaned on.
 
+**Phase B infrastructure has landed; the run has not.** The Maintenance clearance
+is now fitted to the real M1 outcome (`src/pages/` writable, `src/data/` frozen),
+the advisor has a maintenance-specific brief, and a second project
+(`admin-console-maint/`, external to this repo like `admin-console/`) exists with
+a cloned copy of the M1 outcome and a `posthog` sensor whose signal points at one
+concrete change. See "Phase B" below the milestone table — the scaffolding is
+proven with the envelope binary directly (accepted/rejected stages, one green
+maintenance commit, reset back to a pristine clone); the advisor has not yet been
+run against it (that run is a separate, paid step).
+
 ## The order, and why
 
 Sequencing is driven by dependency, not by residual number. First prove the loop
@@ -123,6 +133,68 @@ same changeset; staging a lockfile directly is refused under every clearance; a
 changeset that introduces a new advisory is refused, one that leaves pre-existing
 findings unchanged is not — each demonstrated by a real-`npm` integration test in
 `tests/worktree_lifecycle.rs`.
+
+## Phase B — Sensor-driven maintenance (infrastructure landed, run pending)
+
+**Status: infrastructure landed 2026-07-24; the advisor has not yet been run
+against it.** M1 proved genesis end to end; every milestone since has hardened
+that path. Phase B is the first exercise of the *other* clearance ADR 0005
+named but M1 never used: Maintenance, against an outcome that already exists and
+already builds, driven by a sensor rather than a human requirement.
+
+**Why here.** M2 (dependency maintenance) already puts real writes through the
+Maintenance clearance, but only for `package.json` — it says nothing about
+whether the clearance's allowlist actually fits a real app's *feature* surface,
+or whether the brief that goes with it reads as "maintain," not "build." Both
+needed settling before a real sensor-driven run is worth spending money on, and
+neither depended on M3–M6.
+
+**What landed.**
+
+- `invariants::reach` is fitted to the concrete shape M1 actually produced:
+  `src/pages/` (the app's page components) joins `ALLOWED_WRITE_PREFIXES`
+  alongside `src/components/`; `src/data/` (the fixture/data-access contract)
+  joins `FORBIDDEN_WRITE_PREFIXES` alongside `src/api/` — frozen under
+  Maintenance for the same reason: it is a contract the agent did not write and
+  should not redefine one page at a time. `src/App.tsx`, `src/types.ts`, and
+  `src/main.tsx` stay outside the allowlist deliberately: a bounded in-page
+  change should never need to touch routing or the type contract.
+- `advisor/src/loop.ts` gains `maintenanceSystemPrompt`, selected by
+  `opts.ctx.clearance` in `runLoop`. It briefs the agent that the outcome
+  already exists and already builds (`establish_workspace` is not part of the
+  job), to read the sensor source(s) before deciding anything, to propose one
+  bounded change, and — since `docs/adr/` is outside the Maintenance
+  allowlist (confirmed against the real reach rules, not asserted) — to record
+  its rationale in the `commit_changeset` intent instead of fighting the
+  boundary trying to stage an ADR.
+- A second project, `admin-console-maint/` (external to this repo, a sibling of
+  `admin-console/`, not tracked here — same convention as ADR 0003), holds a
+  git clone of the M1 outcome as its workspace, a `posthog` sensor
+  (`sensors/posthog/events.json` + `README.md`) framed explicitly as a static
+  export standing in for a live feed, one observation
+  (`observations/0001-products-list-sorting.md`) naming the sensor as its
+  source, and `project.json` set to `"clearance": "maintenance"`. The sensor's
+  signal is concrete and single-purpose: heavy, repeated clicks on the
+  Products table's Name/Price headers (which do nothing today), search
+  queries encoding sort intent the search box can't satisfy, and in-app
+  feedback explicitly asking to sort the product list — all pointing at one
+  bounded change inside `src/pages/ProductsPage.tsx`.
+
+**Where it lives.** `envelope/src/invariants/reach.rs`, `advisor/src/loop.ts`,
+and `admin-console-maint/` (external project directory).
+
+**Exit criterion — not yet met; this increment stops short of it.** The
+scaffolding is proven with the `envelope` binary directly, not the advisor: a
+stage of `src/pages/ProductsPage.tsx` under `--clearance maintenance` is
+accepted, a stage of `src/data/products.json` is rejected, a stage of
+`docs/adr/0001-*.md` is rejected (confirming the brief's claim about reach), a
+hand-written trivial edit to `ProductsPage.tsx` stages, commits green
+(`npm ci` + build + audit non-regression), and the workspace is reset back to
+its clone `HEAD` afterward. Running the advisor itself (`autopilot run` inside
+`admin-console-maint/`) — reading the `posthog` sensor and landing a real
+maintenance changeset — is a paid step, deliberately not taken in this
+increment, and the milestone stays open until it is and the result is
+reviewed.
 
 ## M3 — Agentic UI verification (discharges R7)
 
