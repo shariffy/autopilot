@@ -37,6 +37,7 @@ const ALLOWED_WRITE_PREFIXES: &[&str] = &[
     "src/features/",
     "src/routes/",
     "src/styles/",
+    "src/pages/",
     "config/flags/",
 ];
 
@@ -65,6 +66,7 @@ const NEVER_WRITE_FILES: &[&str] = &["package-lock.json", "pnpm-lock.yaml", "yar
 /// already covers them.
 const FORBIDDEN_WRITE_PREFIXES: &[&str] = &[
     "src/api/",  // the contract/client for the provided backend — not the agent's to change
+    "src/data/", // the data/fixture contract — frozen under maintenance, exactly like src/api/
     "secrets/",  // credentials must never be written into the frontend bundle
     "infra/",    // build and deploy pipeline configuration
     "envelope/", // the trusted core may not be edited by the agent it governs
@@ -211,6 +213,28 @@ mod tests {
     }
 
     #[test]
+    fn maintenance_allows_page_components() {
+        // The app's page components (src/pages/) are ordinary in-page surface,
+        // fitted to how the real app is laid out — same footing as src/components/.
+        assert!(maintenance("src/pages/ProductsPage.tsx").is_empty());
+    }
+
+    #[test]
+    fn maintenance_forbids_data_contract() {
+        // The data/fixture contract is frozen under maintenance, exactly like
+        // src/api/ — a bounded in-page change must not be able to redefine what
+        // data the app serves.
+        assert!(!maintenance("src/data/products.json").is_empty());
+    }
+
+    #[test]
+    fn genesis_allows_the_data_contract_maintenance_freezes() {
+        // Genesis must be able to establish the data/fixture layer in the first
+        // place; only Maintenance freezes it once the outcome has launched.
+        assert!(genesis("src/data/products.json").is_empty());
+    }
+
+    #[test]
     fn maintenance_forbids_outside_allowlist() {
         assert!(!maintenance("scripts/deploy.sh").is_empty());
     }
@@ -312,6 +336,8 @@ mod tests {
             "src",
             "components",
             "features",
+            "pages",
+            "data",
             "api",
             "secrets",
             "infra",
