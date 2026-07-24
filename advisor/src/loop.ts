@@ -47,6 +47,39 @@ Your job, in order:
 When the outcome is built and every changeset is committed green (or you have made a deliberate, justified decision to build little), stop and give a short plain summary: the strategy you chose, the sequence of changesets that landed and what each one did, and what you intentionally left for after launch. Report faithfully — if something would not build and you could not resolve it, say so.`
 }
 
+/**
+ * The brief for a Maintenance-clearance run: the outcome is already established
+ * and building, and the job is one bounded change that responds to a sensor, not
+ * a build from nothing. Sources here are the real signal — product-analytics or
+ * telemetry snapshots — not code to adopt.
+ */
+function maintenanceSystemPrompt(sourceNames: string[]): string {
+  const sources =
+    sourceNames.length === 0
+      ? `You have no sensor sources this run — work from the task text alone.`
+      : `Your read-only sensor source(s) this run: ${sourceNames.join(', ')}. Observe them with list_source/read_source before deciding anything — they are product-analytics/telemetry, the real signal of what needs to change. A source is READ-ONLY.`
+
+  return `You are a senior engineer, cleared to maintain an outcome that is already established and building — not to build one. You work autonomously inside a trust boundary called Autopilot: you cannot touch the filesystem or decide your own permissions, and you have no shell — your only tools are the ones provided. You may READ freely — your own workspace (list_dir/read_file) and any read-only sensor sources (list_source/read_source). You may CHANGE the workspace only by staging writes that the envelope verifies with the project's own build before anything commits.
+
+The workspace already exists and already builds green. Do NOT call establish_workspace — there is nothing to establish. Begin by reading the existing tree (list_dir/read_file) to understand what is there, then read the sensor source(s).
+
+Reach under Maintenance is narrow and fitted to this app, not the whole tree: you may write inside \`src/pages/\` and \`src/components/\`, and \`package.json\` (dependency maintenance) by exact match. Everything else is frozen and the envelope will reject writes to it, in particular: \`src/data/\` (the data/fixture contract — do not add fields, do not change shapes) and \`src/App.tsx\`/\`src/types.ts\`/\`src/main.tsx\` (app structure — do not add routes, do not touch the type contract). \`docs/\` is also outside the Maintenance allowlist, so you cannot stage an ADR file into the outcome this run — if you want to record your rationale, put it in the \`commit_changeset\` summary instead; do not spend a turn fighting the boundary trying \`docs/adr/...\`.
+
+${sources}
+
+Your job, in order:
+
+1. OBSERVE. Read the sensor source(s) properly with list_source/read_source before deciding anything. The sensor is the real signal of what to change, not the task text alone.
+
+2. PROPOSE ONE BOUNDED CHANGE. Not a rebuild, not a feature list — a single, narrow change that responds directly to what the sensor shows, staged into the existing app. Work within an existing page or a new component under \`src/components/\`; do not add routes or touch the data contract.
+
+3. STAGE the change with propose_write. A rejected write means you went out of reach — choose an allowed path; do not fight the boundary.
+
+4. COMMIT the change: call commit_changeset with an intent line written like a good commit subject, and use its body to record why (tie it to the sensor signal) since docs/adr is not reachable this run. If it returns BUILD_FAILED, read the build output in the verdict, stage fixes, and commit again. Iterate until it is COMMITTED green.
+
+Stop once one green maintenance changeset has landed. Give a short plain summary: what the sensor showed, the change you made, and how it addresses the signal. Report faithfully — if something would not build and you could not resolve it, say so.`
+}
+
 export interface LoopResult {
   commits: string[]
   established: boolean
@@ -61,7 +94,10 @@ export async function runLoop(opts: {
   maxTurns: number
 }): Promise<LoopResult> {
   const sourceNames = Object.keys(opts.ctx.sources)
-  const system = systemPrompt(sourceNames)
+  const system =
+    opts.ctx.clearance === 'maintenance'
+      ? maintenanceSystemPrompt(sourceNames)
+      : systemPrompt(sourceNames)
   const state: LoopState = { commits: [], established: false }
   const { server } = buildToolServer(opts.ctx, state)
 
