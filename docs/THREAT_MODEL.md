@@ -76,6 +76,8 @@ Each threat assumes a capable, adversarial agent.
 | T8 | Mutate the world without going through the monitor | `World` exposes only `&` views publicly; mutators are crate-private and `&mut World` is held only inside `enact` | `reversible.rs`, `harness.rs` |
 | T9 | Let a harmful change quietly persist | Outcome gate fails **closed** (unmeasured ⇒ breach) and auto-reverts; every step is logged | `guardrails.rs`, `harness.rs`, `decision_log.rs` |
 | T10 | A regression in the real (git-backed) changeset lifecycle — commit-scoping, reset-on-red, the clean-tree precondition — escapes to production because the I/O orchestration around the pure kernel is only smoke-tested | Real-path integration tests drive the compiled `envelope` binary against throwaway git repos with real `git` and `npm`/`tsc` builds: clean establish, commit tracks exactly the staged set, stage auto-opens a changeset, untracked build residue never wedges the next changeset, a failed build lands nothing and `reset` clears it, `begin` refuses a dirty tracked tree | `tests/worktree_lifecycle.rs` |
+| T11 | Author a lockfile to smuggle an attacker-controlled `resolved`/`integrity` pair (npm binds integrity to whatever was downloaded, not to the registry's published artifact), or to make dependency lifecycle scripts execute inside the verifier | `package-lock.json`/`pnpm-lock.yaml`/`yarn.lock` are an exact-match never-write zone under **every** clearance, Genesis included; the agent may propose `package.json` intent only, and the trusted core computes the lockfile during verification, with `--ignore-scripts` on resolve and install | `invariants/reach.rs` (`NEVER_WRITE_FILES`), `worktree.rs::BuildVerifier` (ADR 0009) |
+| T12 | Introduce a dependency with a known, filed security advisory — directly or transitively | Audit non-regression gate: `npm audit` on the changeset's tree is compared against the same command run against `HEAD`'s manifest and lockfile; a changeset that introduces an advisory ID absent from that baseline fails closed. Pre-existing findings (inherited, or predating this gate) do not themselves block | `worktree.rs::BuildVerifier::run` (ADR 0009), `tests/worktree_lifecycle.rs` |
 
 ## Residual risks and assumptions to discharge
 
@@ -114,11 +116,23 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
   break the page, which only UI verification catches.
 - **R8 — The verifier executes the repo's build (new TCB surface).** Running
   `npm run build` executes whatever the build pipeline does on the host. The build
-  *definition* is protected — `package.json`, `infra/`, and lockfiles are outside
-  the write allowlist, so the agent cannot alter the verifier it is judged by — but
-  a written source file that the build configuration imports could in principle run
-  at build time. Hardening (sandboxed/network-isolated build, pinned toolchain) is
-  not yet done; the build runs in the local environment.
+  *definition* is protected — `package.json` is writable only as manifest intent,
+  and lockfiles are an exact-match never-write zone (T11) — so the agent cannot
+  alter the verifier it is judged by, but a written source file that the build
+  configuration imports could in principle run at build time. `--ignore-scripts`
+  on resolve and install (ADR 0009) narrows this — dependency lifecycle scripts no
+  longer run during those steps — but does not close it: the build step itself is
+  unsandboxed, and a source file the build imports still executes on the host.
+  Hardening (sandboxed/network-isolated build, pinned toolchain) is not yet done;
+  the build runs in the local environment.
+- **R10 — Registry provenance and publish attestation are not verified.** The
+  audit gate (T12) is a non-regression check against **known, filed** advisories —
+  `npm audit`'s database. It says nothing about whether the tarball a `resolved`
+  URL points to is actually what its maintainer published, or about npm's
+  provenance/attestation tooling (`npm audit signatures`, sigstore attestations) —
+  neither is checked. A supply-chain compromise with no advisory filed yet is
+  invisible to this gate; it defends against *regressing on what is already known*,
+  not against a novel, unfiled compromise.
 
 ## Out of scope
 
@@ -131,9 +145,10 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
 
 This model is verifiable against the source: every mitigation names the module
 that implements it. The test suite exercises the policy denials and the outcome
-gate at runtime — T1, T2, T3, T4, T5, T7, and T9 (see the `reach` and `harness`
-test modules) — and T10 exercises the real git-backed path end to end (see
-`tests/worktree_lifecycle.rs`). T6 and T8 are enforced at **compile time** rather
+gate at runtime — T1, T2, T3, T4, T5, T7, T9, and T11 (see the `reach` and
+`harness` test modules) — and T10 and T12 exercise the real git-backed path end
+to end, including a real `npm audit` (see `tests/worktree_lifecycle.rs`). T6 and
+T8 are enforced at **compile time** rather
 than by a test:
 agent-supplied verification, metrics, and guardrails are all unrepresentable in
 `Action`, and `&mut World` is never exposed — so they hold by construction. When a
