@@ -28,15 +28,20 @@ $0.96 over 53 turns. See [docs/runs/0001-first-light.md](runs/0001-first-light.m
 Everything below was ordered around producing that run; it now hardens the pieces
 it leaned on.
 
-**Phase B infrastructure has landed; the run has not.** The Maintenance clearance
-is now fitted to the real M1 outcome (`src/pages/` writable, `src/data/` frozen),
-the advisor has a maintenance-specific brief, and a second project
-(`admin-console-maint/`, external to this repo like `admin-console/`) exists with
-a cloned copy of the M1 outcome and a `posthog` sensor whose signal points at one
-concrete change. See "Phase B" below the milestone table — the scaffolding is
-proven with the envelope binary directly (accepted/rejected stages, one green
-maintenance commit, reset back to a pristine clone); the advisor has not yet been
-run against it (that run is a separate, paid step).
+**Phase B has run.** On 2026-07-24 the advisor (Sonnet 4.6) read a `posthog`
+analytics signal against the M1 outcome and landed one green, bounded maintenance
+changeset — sortable Product columns, advisor-authored / envelope-committed, with
+an ADR — for $0.26, inside the fitted Maintenance allowlist (`src/pages/` writable,
+`src/data/` frozen). Published to the demo repo.
+
+**Phase C has run: the two-loop runtime envelope.** A change that built green but
+crashed at runtime (a dangling category lookup) was caught in production by the
+model-free **runtime trip** (`envelope monitor` read a telemetry error-rate breach
+and `git revert`ed the deploy to last-known-good), then the advisor landed a
+**durable fix** — gated by build plus a **frozen reproducer** the agent cannot
+author (`tests/contract/`, ADR 0011) — for $0.22. This partially discharges R7
+(the test stage catches build-green/runtime-broken pre-commit; the trip auto-heals
+in production); the general case stays open.
 
 **Phase D infrastructure has landed; the run has not.** Reach now freezes
 `src/design-system/` under Maintenance and a new verifier stage requires
