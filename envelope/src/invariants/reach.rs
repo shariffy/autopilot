@@ -39,6 +39,12 @@ const ALLOWED_WRITE_PREFIXES: &[&str] = &[
     "src/styles/",
     "src/pages/",
     "config/flags/",
+    // The append-only decision ledger (ADR 0006), open here exactly as it is
+    // under Genesis: recording a maintenance decision as an ADR is
+    // documentation, not the code or the data/API contract that carries the
+    // freeze rationale. Only `docs/adr/` is opened, not all of `docs/` — a
+    // sibling like `docs/secrets.md` stays outside the allowlist.
+    "docs/adr/",
 ];
 
 /// Exact-match filenames the agent may write under Maintenance — checked by
@@ -240,6 +246,21 @@ mod tests {
     }
 
     #[test]
+    fn maintenance_allows_recording_an_adr() {
+        // A maintenance run may record its decision as an ADR, exactly as
+        // genesis does (the append-only decision ledger, ADR 0006) — this is
+        // documentation, not code or the data/API contract, so it carries none
+        // of the freeze rationale.
+        assert!(maintenance("docs/adr/0007-something.md").is_empty());
+    }
+
+    #[test]
+    fn maintenance_forbids_non_adr_docs() {
+        // Only `docs/adr/` is opened, not all of `docs/`.
+        assert!(!maintenance("docs/secrets.md").is_empty());
+    }
+
+    #[test]
     fn maintenance_forbids_traversal_into_forbidden() {
         // A `..` must not move the path out of an allowed prefix and into a
         // forbidden one.
@@ -341,6 +362,8 @@ mod tests {
             "api",
             "secrets",
             "infra",
+            "docs",
+            "adr",
             "x",
             "..",
             ".",
