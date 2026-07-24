@@ -78,6 +78,7 @@ Each threat assumes a capable, adversarial agent.
 | T10 | A regression in the real (git-backed) changeset lifecycle — commit-scoping, reset-on-red, the clean-tree precondition — escapes to production because the I/O orchestration around the pure kernel is only smoke-tested | Real-path integration tests drive the compiled `envelope` binary against throwaway git repos with real `git` and `npm`/`tsc` builds: clean establish, commit tracks exactly the staged set, stage auto-opens a changeset, untracked build residue never wedges the next changeset, a failed build lands nothing and `reset` clears it, `begin` refuses a dirty tracked tree | `tests/worktree_lifecycle.rs` |
 | T11 | Author a lockfile to smuggle an attacker-controlled `resolved`/`integrity` pair (npm binds integrity to whatever was downloaded, not to the registry's published artifact), or to make dependency lifecycle scripts execute inside the verifier | `package-lock.json`/`pnpm-lock.yaml`/`yarn.lock` are an exact-match never-write zone under **every** clearance, Genesis included; the agent may propose `package.json` intent only, and the trusted core computes the lockfile during verification, with `--ignore-scripts` on resolve and install | `invariants/reach.rs` (`NEVER_WRITE_FILES`), `worktree.rs::BuildVerifier` (ADR 0009) |
 | T12 | Introduce a dependency with a known, filed security advisory — directly or transitively | Audit non-regression gate: `npm audit` on the changeset's tree is compared against the same command run against `HEAD`'s manifest and lockfile; a changeset that introduces an advisory ID absent from that baseline fails closed. Pre-existing findings (inherited, or predating this gate) do not themselves block. Where `HEAD` carries no manifest there is no baseline to regress from, so the establishing genesis changeset records its findings for the human launch gate rather than being refused | `worktree.rs::BuildVerifier::run` (ADR 0009), `tests/worktree_lifecycle.rs` |
+| T13 | Introduce ad-hoc UI — a raw `<button>`/`<input>`/`<select>`/`<a>` or a hand-rolled `style={{...}}` — bypassing the sanctioned design system, one maintenance changeset at a time (concretely: ADR 0002 added inline styles and named reach as the reason) | Two-part invariant: `src/design-system/` is a frozen `reach` zone under Maintenance (the agent composes from the primitives, cannot fork or edit them), and a content-level verifier stage lints every staged `.tsx` file under `src/pages/`/`src/components/`, rejecting the banned raw tags and inline styles and requiring at least one design-system import — a `reach` invariant alone cannot express the second half, since reach sees a path and a byte count, never the bytes | `invariants/reach.rs` (`FORBIDDEN_WRITE_PREFIXES`), `design.rs`, `worktree.rs::BuildVerifier::run` (ADR 0012), `tests/worktree_lifecycle.rs` |
 
 ## Residual risks and assumptions to discharge
 
@@ -138,6 +139,20 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
   neither is checked. A supply-chain compromise with no advisory filed yet is
   invisible to this gate; it defends against *regressing on what is already known*,
   not against a novel, unfiled compromise.
+- **R11 — The design-conformance lint (T13) is a subset, not a full composition
+  grammar.** `design.rs` is deliberately lint-level — substring/line scanning, not
+  a JSX/TSX parser, to keep the crate zero-dependency — and the rule set is
+  deliberately small: banned raw tags, inline styles, and import presence. It does
+  not know which component may nest inside which, does not check prop-level
+  constraints, and cannot distinguish a banned substring appearing inside a string
+  literal or comment from one that is real JSX (an accepted false-positive
+  tradeoff, not a false negative — such a file still gets rejected, just for a
+  reason slightly broader than intended). A change that imports the design system
+  and avoids every banned substring but still composes an incoherent or
+  off-brand result — e.g. deeply nested primitives in a way no design review
+  would approve, or a prop combination the design system technically allows but
+  never intends — is not caught. The gate narrows "ad-hoc UI" to "ad-hoc UI built
+  from banned raw markup"; it does not make every staged page well-designed.
 
 ## Out of scope
 
@@ -151,8 +166,9 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
 This model is verifiable against the source: every mitigation names the module
 that implements it. The test suite exercises the policy denials and the outcome
 gate at runtime — T1, T2, T3, T4, T5, T7, T9, and T11 (see the `reach` and
-`harness` test modules) — and T10 and T12 exercise the real git-backed path end
-to end, including a real `npm audit` (see `tests/worktree_lifecycle.rs`). T6 and
+`harness` test modules) — and T10, T12, and T13 exercise the real git-backed
+path end to end, including a real `npm audit` and a real `tsc`/`vite build`
+(see `tests/worktree_lifecycle.rs`). T6 and
 T8 are enforced at **compile time** rather
 than by a test:
 agent-supplied verification, metrics, and guardrails are all unrepresentable in

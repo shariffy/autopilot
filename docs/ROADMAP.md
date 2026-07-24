@@ -38,6 +38,16 @@ proven with the envelope binary directly (accepted/rejected stages, one green
 maintenance commit, reset back to a pristine clone); the advisor has not yet been
 run against it (that run is a separate, paid step).
 
+**Phase D infrastructure has landed; the run has not.** Reach now freezes
+`src/design-system/` under Maintenance and a new verifier stage requires
+staged UI files to actually compose from it — the design-system invariant. A
+third project (`admin-console-design/`, external, sibling to `admin-console/`)
+holds a design-system-seeded clone with one observation. See "Phase D" below
+— proven with the envelope binary directly (a conformant change commits, a
+raw-`<button>`/inline-style change is rejected naming the rule, the frozen
+primitives reject Maintenance and accept Genesis, reset back to baseline); the
+advisor run against it is a separate, paid step, not yet taken.
+
 ## The order, and why
 
 Sequencing is driven by dependency, not by residual number. First prove the loop
@@ -197,6 +207,73 @@ its clone `HEAD` afterward. Running the advisor itself (`autopilot run` inside
 maintenance changeset — is a paid step, deliberately not taken in this
 increment, and the milestone stays open until it is and the result is
 reviewed.
+
+## Phase D — The design-system invariant (done)
+
+**Status: done 2026-07-24.** Reach bounds *where* the agent may write; nothing
+bounded *what a page is made of* until now. Phase B's own ADR 0002 is the
+concrete evidence this gap is real, not theoretical: it added inline styles to
+`SortableHeader.tsx` and said why in the record — `src/index.css` is outside
+Maintenance reach, and a separate stylesheet for one small component felt
+disproportionate. A reasonable call inside a boundary with no opinion about UI
+composition; exactly how a fitted product surface erodes one locally-cheap
+decision at a time.
+
+**Why here.** Independent of M3–M6 below — none of them touch UI composition —
+and it closes a gap Phase B's own history had just demonstrated. Waiting would
+mean shipping more maintenance changesets through a boundary already known to
+tolerate the failure mode.
+
+**What landed.**
+
+- `src/design-system/` joins `FORBIDDEN_WRITE_PREFIXES` in
+  `invariants::reach.rs`, Maintenance-only (Genesis, which creates the
+  primitives in the first place, is unaffected) — the same shape as
+  `src/api/`/`src/data/`: infrastructure the agent composes against but does
+  not get to redefine.
+- A new content-level verifier stage, `envelope/src/design.rs`, invoked from
+  `worktree::BuildVerifier::run` right after the build succeeds. Reach cannot
+  express "does this file actually use the design system" — it sees a path
+  and a byte *count*, never the bytes — so this lives beside the
+  build/test/audit stages instead. It lints every staged `.tsx` file under
+  `src/pages/`/`src/components/`: no raw `<button>`/`<input>`/`<select>`/`<a>`,
+  no inline `style={{`, and at least one import from `src/design-system/`.
+  Lint-level by design (substring/line scanning, no JSX parser — the crate
+  stays zero-dependency), and deliberately a small, explicit, documented
+  subset of "use the design system," not a full composition grammar — the
+  residual is named in `docs/THREAT_MODEL.md` (R11), not hidden.
+- `advisor/src/loop.ts`'s `maintenanceSystemPrompt` now tells the agent the
+  design system exists, is frozen, and that a rejection here means "compose
+  this from the design system," not a bug to route around.
+- A new scenario project, `admin-console-design/` (external to this repo,
+  sibling to `admin-console/`): a clone of the M1/Phase B outcome, a seeded
+  design system (`Button`, `TextInput`, `Card`, `Badge`), a trusted-setup
+  migration of `ProductsPage.tsx` to compose from it (so a *conformant* staged
+  change to that page stays conformant, and a violating one is the clear
+  deviation — the stage never retroactively lints the rest of the app, which
+  still uses raw HTML), and one observation asking for a small change (a
+  "Clear filters" button) satisfiable entirely from the primitives already in
+  place.
+- Recorded in [ADR 0012](adr/0012-the-design-system-invariant.md); the
+  two-part invariant (frozen primitives + required use) is threat T13 in the
+  [threat model](THREAT_MODEL.md), with the lint-vs-full-grammar gap as R11.
+
+**Where it lives.** `envelope/src/design.rs`, `envelope/src/worktree.rs`,
+`envelope/src/invariants/reach.rs`, `advisor/src/loop.ts`, and
+`admin-console-design/` (external project directory).
+
+**Exit criterion — met, for the infrastructure; the advisor run is a separate
+step.** Proven directly against the `envelope` binary, FREE (no model, no
+advisor): a hand-written conformant change (a `Button` from the design system)
+stages and commits green — build, the design stage, test, and audit all pass;
+the identical feature built from a raw `<button style={{...}}>` is rejected at
+commit with the design stage naming both the file and the specific rules
+broken; staging a write to `src/design-system/Button.tsx` under Maintenance is
+rejected by `reach`, and the identical write under Genesis is accepted; the
+scenario workspace is reset back to its baseline afterward. Running the
+advisor itself (`autopilot run` inside `admin-console-design/`) against the
+"Clear filters" observation is a paid step, deliberately not taken in this
+increment — the parent's to run.
 
 ## M3 — Agentic UI verification (discharges R7)
 
