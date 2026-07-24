@@ -129,7 +129,7 @@ impl Clearance {
             }];
         }
 
-        if ALLOWED_WRITE_FILES.iter().any(|f| normalized == *f) {
+        if ALLOWED_WRITE_FILES.contains(&normalized) {
             return vec![];
         }
 
@@ -151,7 +151,7 @@ impl Clearance {
 /// Shared by `check_genesis` and `check_maintenance` so the rule reads
 /// identically — and is enforced identically — under every clearance.
 fn never_write_file_violation(path: &str, normalized: &str) -> Option<Violation> {
-    if NEVER_WRITE_FILES.iter().any(|f| normalized == *f) {
+    if NEVER_WRITE_FILES.contains(&normalized) {
         Some(Violation {
             invariant: "reach",
             reason: format!(
