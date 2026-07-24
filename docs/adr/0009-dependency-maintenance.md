@@ -93,6 +93,17 @@ that.
    arrive via an adopted predecessor, are not retroactively grounds for refusal —
    only new ones are.
 
+   **Establishment is not a regression.** When `HEAD` carries no manifest there is
+   no baseline to regress *from*, so the gate does not apply: the establishing
+   genesis changeset sets the baseline and its findings are recorded rather than
+   refused. The alternative — treating an absent baseline as an empty one — reads
+   every advisory as newly introduced and makes the envelope unable to bring any
+   real application into existence, since every mainstream stack ships some
+   transitive advisory on the day it is installed. That is an inability to start,
+   not a security property. Genesis is bounded instead by a disposable workspace,
+   atomic reversibility, and the human launch gate (ADR 0005), with the recorded
+   findings in front of that review.
+
 Resolution producing or updating `package-lock.json` records that path into the
 open changeset's membership (the same `.git/envelope-changeset` list `stage`
 writes to) — an explicitly **envelope-authored** member, not agent residue. The

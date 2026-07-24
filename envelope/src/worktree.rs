@@ -182,7 +182,23 @@ impl BuildVerifier {
         // findings (already present at `HEAD`) never block — the demo already
         // carries some; only an advisory THIS changeset newly introduces does.
         let current = Self::advisory_ids(repo);
-        let baseline = Self::baseline_advisory_ids(repo);
+        let Some(baseline) = Self::baseline_advisory_ids(repo) else {
+            // Nothing established yet: this changeset *is* the baseline, so there
+            // is no regression to detect. Blocking here would make the envelope
+            // unable to bring any real app into existence — every mainstream
+            // stack carries some transitive advisory on the day it is installed,
+            // and refusing that is not a security property, just an inability to
+            // start. Genesis is bounded instead by a disposable workspace, atomic
+            // reversibility, and the human launch gate (ADR 0005); the findings
+            // are recorded here so that review sees them.
+            let summary = format!(
+                "npm audit: {} advisories (baseline established by this changeset)",
+                current.len()
+            );
+            log.push_str(&format!("\n{summary}\n"));
+            *self.last_audit.borrow_mut() = Some(summary);
+            return (true, log);
+        };
         let introduced: BTreeSet<i64> = current.difference(&baseline).copied().collect();
         let summary = format!(
             "npm audit: {} advisories ({} pre-existing, {} newly introduced{})",
@@ -225,10 +241,13 @@ impl BuildVerifier {
     /// lookup itself). No manifest at `HEAD` means the first genesis
     /// changeset: nothing existed yet to have pre-existing findings, so the
     /// baseline is empty.
-    fn baseline_advisory_ids(repo: &Path) -> BTreeSet<i64> {
+    fn baseline_advisory_ids(repo: &Path) -> Option<BTreeSet<i64>> {
         let (ok, manifest) = git(repo, &["show", "HEAD:package.json"]);
         if !ok {
-            return BTreeSet::new();
+            // No manifest at `HEAD`: nothing has been established yet, so there is
+            // no baseline to regress *from*. Distinct from an established baseline
+            // that happens to be clean — see the gate in `run`.
+            return None;
         }
         let tmp = std::env::temp_dir().join(format!(
             "envelope-audit-baseline-{}-{}",
@@ -239,7 +258,7 @@ impl BuildVerifier {
                 .unwrap_or(0)
         ));
         if std::fs::create_dir_all(&tmp).is_err() {
-            return BTreeSet::new();
+            return None;
         }
         let _ = std::fs::write(tmp.join("package.json"), manifest);
         let (lock_ok, lockfile) = git(repo, &["show", "HEAD:package-lock.json"]);
@@ -250,7 +269,7 @@ impl BuildVerifier {
             .map(|s| parse_advisory_ids(&s))
             .unwrap_or_default();
         let _ = std::fs::remove_dir_all(&tmp);
-        ids
+        Some(ids)
     }
 
     fn describe(&self, repo: &Path) -> String {

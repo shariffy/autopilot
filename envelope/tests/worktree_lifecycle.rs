@@ -741,10 +741,11 @@ fn audit_gate_fails_a_changeset_that_introduces_a_new_advisory() {
 
 /// Land a baseline that already carries a dependency finding, committed
 /// DIRECTLY with `git` — bypassing the envelope entirely. This is the only way
-/// such a baseline can exist: the gate itself never lets a changeset that
-/// introduces a new advisory land (see the test above), so a "pre-existing"
-/// finding can only ever be inherited — an adopted predecessor, or history that
-/// predates the audit gate — never freshly introduced through the envelope.
+/// such a baseline can exist: once a baseline is established the gate never lets
+/// a changeset introduce a new advisory (see the test above), so a "pre-existing"
+/// finding is either inherited — an adopted predecessor, or history predating the
+/// audit gate — or else arrived with the establishing genesis changeset, which by
+/// definition has no baseline to regress from.
 fn land_inherited_baseline_with_vulnerable_dep(ws: &Workspace) {
     let out = establish_empty(ws);
     assert!(out.contains("\"outcome\":\"established\""), "{out}");
@@ -819,6 +820,45 @@ fn audit_gate_allows_a_changeset_that_leaves_pre_existing_findings_unchanged() {
 
     let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
     assert_ne!(head_before, head_after, "a new commit should have landed");
+}
+
+/// Establishment is not a regression. A first genesis changeset whose dependencies
+/// carry known advisories must LAND: it is establishing the baseline, not
+/// regressing from one. Blocking it would leave the envelope unable to bring any
+/// real application into existence — every mainstream stack ships some transitive
+/// advisory on the day it is installed — which is an inability to start, not a
+/// security property. Genesis is bounded instead by a disposable workspace, atomic
+/// reversibility, and the human launch gate (ADR 0005).
+#[test]
+fn genesis_establishes_the_audit_baseline_rather_than_being_blocked_by_it() {
+    let ws = Workspace::new("audit-genesis-baseline");
+    let out = establish_empty(&ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+
+    for (path, content) in [
+        ("package.json", FIXTURE_PACKAGE_JSON_WITH_VULNERABLE_DEP),
+        ("tsconfig.json", FIXTURE_TSCONFIG),
+        ("src/index.ts", FIXTURE_INDEX_TS_GREEN),
+    ] {
+        let out = stage_with_clearance(&ws, path, content, "genesis");
+        assert!(
+            out.contains("\"outcome\":\"staged\""),
+            "stage {path}: {out}"
+        );
+    }
+
+    let out = commit(&ws, "genesis: bootstrap on a stack carrying advisories");
+    assert!(
+        out.contains("\"outcome\":\"committed\""),
+        "the establishing changeset must set the audit baseline, not be refused by it: {out}"
+    );
+
+    // ...and the envelope-computed lockfile landed in that same commit.
+    let (_, tracked) = git(ws.path(), &["ls-files"]);
+    assert!(
+        tracked.contains("package-lock.json"),
+        "the envelope-computed lockfile should be tracked: {tracked}"
+    );
 }
 
 /// `envelope refresh-deps`: the pure-transitive trusted operation stages the
