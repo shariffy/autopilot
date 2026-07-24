@@ -4,7 +4,8 @@
 //! temp dirs.
 //!
 //! Each test gets its own fresh workspace and drives it end to end with real
-//! `git` and (where a build is involved) a real `npm install && npm run build`.
+//! `git` and (where a build is involved) the real trusted-gate pipeline —
+//! resolve, install, build, and audit (ADR 0009) — against real `npm`/`tsc`.
 //! The npm-dependent tests are slower (seconds, not milliseconds) but exercise the
 //! actual trusted gate, not a stand-in for it — the same tradeoff the verifier
 //! itself makes.
@@ -13,6 +14,9 @@
 //! adjudicated-set, stage-auto-opens-changeset, untracked-residue tolerance,
 //! reset-on-red, and begin-refuses-a-dirty-tracked-tree. Losing any of them would
 //! either corrupt a commit's attributable contents or wedge a run permanently.
+//! Extended for ADR 0009 (dependency maintenance): the lockfile is now a tracked,
+//! envelope-computed changeset member, and the audit gate is a non-regression
+//! check on top of the build.
 
 use std::fs;
 use std::io::Write;
@@ -50,6 +54,46 @@ const FIXTURE_INDEX_TS_RED: &str = "export const greet: number = \"not a number\
 
 const FIXTURE_EXTRA_TS_GREEN: &str =
     "export const shout = (s: string): string => s.toUpperCase();\n";
+
+// A `package.json` edit that changes nothing but the version — enough to force
+// resolution to recompute the lockfile (ADR 0009 §1) without needing a new
+// dependency or any network fetch beyond the one `land_green_fixture` already
+// paid for.
+const FIXTURE_PACKAGE_JSON_BUMPED: &str = r#"{
+  "name": "fixture",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": { "build": "tsc" },
+  "devDependencies": { "typescript": "^5.5.4" }
+}
+"#;
+
+// A dependency with real, stable, well-known advisories (several high-severity
+// ReDoS findings against `minimatch@3.0.0`) — used to exercise the audit
+// non-regression gate against genuine `npm audit` output, not a stand-in.
+const FIXTURE_PACKAGE_JSON_WITH_VULNERABLE_DEP: &str = r#"{
+  "name": "fixture",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": { "build": "tsc" },
+  "devDependencies": { "typescript": "^5.5.4" },
+  "dependencies": { "minimatch": "3.0.0" }
+}
+"#;
+
+// Same vulnerable dependency, same version — only an unrelated field differs —
+// so resolution reruns but reproduces the identical advisory set: the "leaves
+// pre-existing findings unchanged" case.
+const FIXTURE_PACKAGE_JSON_WITH_VULNERABLE_DEP_DESCRIBED: &str = r#"{
+  "name": "fixture",
+  "description": "same vulnerable dependency, unrelated edit",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": { "build": "tsc" },
+  "devDependencies": { "typescript": "^5.5.4" },
+  "dependencies": { "minimatch": "3.0.0" }
+}
+"#;
 
 // ---- process plumbing ----
 
@@ -152,6 +196,12 @@ fn establish_empty(ws: &Workspace) -> String {
 }
 
 fn stage(ws: &Workspace, rel_path: &str, content: &str) -> String {
+    stage_with_clearance(ws, rel_path, content, "genesis")
+}
+
+/// Stage under an explicit clearance ("genesis" or "maintenance") — for tests
+/// that exercise the Maintenance-clearance reach rules directly (ADR 0009).
+fn stage_with_clearance(ws: &Workspace, rel_path: &str, content: &str, clearance: &str) -> String {
     envelope(
         &[
             "stage",
@@ -160,7 +210,7 @@ fn stage(ws: &Workspace, rel_path: &str, content: &str) -> String {
             "--path",
             rel_path,
             "--clearance",
-            "genesis",
+            clearance,
         ],
         content.as_bytes(),
     )
@@ -213,6 +263,34 @@ fn land_green_fixture(ws: &Workspace, intent: &str) -> String {
     let out = commit(ws, intent);
     assert!(out.contains("\"outcome\":\"committed\""), "commit: {out}");
     out
+}
+
+/// Establish and land a genesis changeset with a caller-chosen `package.json`
+/// (tsconfig and the green source file are otherwise fixed) — used by the audit
+/// gate tests to control exactly what the baseline's dependency findings are.
+fn land_fixture_with_package_json(ws: &Workspace, package_json: &str, intent: &str) {
+    let out = establish_empty(ws);
+    assert!(
+        out.contains("\"outcome\":\"established\""),
+        "establish: {out}"
+    );
+    let out = stage(ws, "package.json", package_json);
+    assert!(
+        out.contains("\"outcome\":\"staged\""),
+        "staging package.json: {out}"
+    );
+    let out = stage(ws, "tsconfig.json", FIXTURE_TSCONFIG);
+    assert!(
+        out.contains("\"outcome\":\"staged\""),
+        "staging tsconfig.json: {out}"
+    );
+    let out = stage(ws, "src/index.ts", FIXTURE_INDEX_TS_GREEN);
+    assert!(
+        out.contains("\"outcome\":\"staged\""),
+        "staging src/index.ts: {out}"
+    );
+    let out = commit(ws, intent);
+    assert!(out.contains("\"outcome\":\"committed\""), "commit: {out}");
 }
 
 // ---- 1. establish empty writes a committed baseline; tree is clean ----
@@ -274,7 +352,11 @@ fn commit_tracks_only_the_staged_paths_not_untracked_residue() {
     let out = commit(&ws, "add the fixture ts project");
     assert!(out.contains("\"outcome\":\"committed\""), "{out}");
 
-    // The commit's own contents must be exactly the three staged paths.
+    // The commit's own contents must be exactly the staged paths PLUS the
+    // envelope-computed lockfile (ADR 0009): `package.json` was staged with no
+    // lockfile yet on disk, so resolution ran and `package-lock.json` joined
+    // this changeset's membership — an envelope-authored member, not agent
+    // residue, so it belongs here and NOTES.md still must not.
     let (ok, files) = git(
         ws.path(),
         &["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
@@ -284,12 +366,17 @@ fn commit_tracks_only_the_staged_paths_not_untracked_residue() {
     committed_paths.sort_unstable();
     assert_eq!(
         committed_paths,
-        vec!["package.json", "src/index.ts", "tsconfig.json"],
-        "the commit must contain exactly the staged set, nothing swept in"
+        vec![
+            "package-lock.json",
+            "package.json",
+            "src/index.ts",
+            "tsconfig.json"
+        ],
+        "the commit must contain exactly the staged set plus the envelope-computed lockfile, nothing swept in"
     );
 
-    // The repo's full tracked set is the baseline plus the staged set — NOTES.md
-    // is not among them.
+    // The repo's full tracked set is the baseline plus the staged set (plus the
+    // lockfile) — NOTES.md is not among them.
     let (ok, tracked) = git(ws.path(), &["ls-files"]);
     assert!(ok, "ls-files: {tracked}");
     let mut tracked_paths: Vec<&str> = tracked.lines().collect();
@@ -298,6 +385,7 @@ fn commit_tracks_only_the_staged_paths_not_untracked_residue() {
         tracked_paths,
         vec![
             ".gitignore",
+            "package-lock.json",
             "package.json",
             "src/index.ts",
             "tsconfig.json"
@@ -342,25 +430,36 @@ fn stage_with_no_prior_begin_opens_a_changeset_on_a_clean_tree() {
     reset(&ws);
 }
 
-// ---- 4. untracked residue (the real npm-install byproduct) never wedges the next changeset ----
+// ---- 4. untracked residue (the real npm-ci byproduct) never wedges the next changeset ----
 
 #[test]
 fn untracked_residue_after_a_commit_does_not_block_the_next_changeset() {
     let ws = Workspace::new("residue");
     land_green_fixture(&ws, "add the fixture ts project");
 
-    // `npm install`, run inside the trusted build gate during that commit, left a
-    // real, gitignored, untracked lockfile in the tree — the exact residue the
-    // liveness fix targets.
+    // Resolution ran inside that commit's build gate (ADR 0009): the lockfile
+    // it computed is now a genuine, TRACKED member of the commit, not residue.
     assert!(
         ws.path().join("package-lock.json").is_file(),
-        "npm install should have produced a lockfile as a byproduct of the build"
+        "resolution should have produced a lockfile"
     );
     let (ok, tracked) = git(ws.path(), &["ls-files"]);
     assert!(ok, "ls-files: {tracked}");
     assert!(
-        !tracked.lines().any(|f| f == "package-lock.json"),
-        "the lockfile must stay untracked (it is gitignored, not staged): {tracked:?}"
+        tracked.lines().any(|f| f == "package-lock.json"),
+        "the envelope-computed lockfile must be tracked, not residue: {tracked:?}"
+    );
+
+    // `npm ci`, also run inside that same gate, left a real, gitignored,
+    // untracked `node_modules/` in the tree — now the residue the liveness fix
+    // targets, in place of the (now-tracked) lockfile.
+    assert!(
+        ws.path().join("node_modules").is_dir(),
+        "npm ci should have produced node_modules as a byproduct of install"
+    );
+    assert!(
+        !tracked.lines().any(|f| f.starts_with("node_modules/")),
+        "node_modules must stay untracked (it is gitignored): {tracked:?}"
     );
 
     // A second changeset, staged and committed on top of that residue, must
@@ -459,5 +558,314 @@ fn begin_refuses_when_a_tracked_file_has_drifted_from_head() {
         out.to_lowercase()
             .contains("tracked files differ from head"),
         "the refusal should name the reason: {out}"
+    );
+}
+
+// ---- 7. dependency maintenance as a first-class changeset (ADR 0009) ----
+
+/// A genesis commit tracks its lockfile — it is no longer gitignored.
+#[test]
+fn genesis_commit_tracks_the_lockfile_no_longer_ignored() {
+    let ws = Workspace::new("lockfile-tracked");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    assert!(
+        ws.path().join("package-lock.json").is_file(),
+        "resolution should have produced a lockfile"
+    );
+    let (ok, tracked) = git(ws.path(), &["ls-files"]);
+    assert!(ok, "ls-files: {tracked}");
+    assert!(
+        tracked.lines().any(|f| f == "package-lock.json"),
+        "package-lock.json should be tracked, not gitignored: {tracked:?}"
+    );
+
+    // Not merely present on disk untracked — it is IN the genesis commit itself.
+    let (ok, files) = git(
+        ws.path(),
+        &["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+    );
+    assert!(ok, "diff-tree: {files}");
+    assert!(
+        files.lines().any(|f| f == "package-lock.json"),
+        "the lockfile should be part of the genesis commit itself: {files:?}"
+    );
+}
+
+/// The agent can never author a lockfile — under genesis OR maintenance.
+#[test]
+fn staging_a_lockfile_is_rejected_under_every_clearance() {
+    let ws = Workspace::new("lockfile-reject");
+    let out = establish_empty(&ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+
+    for clearance in ["genesis", "maintenance"] {
+        let out = stage_with_clearance(&ws, "package-lock.json", "{}", clearance);
+        assert!(
+            out.contains("\"outcome\":\"rejected\""),
+            "staging a lockfile under {clearance} should be rejected: {out}"
+        );
+        assert!(
+            out.to_lowercase().contains("computed by the trusted core"),
+            "the reason should name the real cause under {clearance}: {out}"
+        );
+    }
+
+    // A rejected proposal never touches the tree.
+    assert!(
+        !ws.path().join("package-lock.json").exists(),
+        "a rejected write must never reach the tree"
+    );
+}
+
+/// `package.json` is writable under Maintenance (ADR 0009's dependency-intent
+/// surface); `package.json.bak` proves the allowlist is exact-match, not prefix.
+#[test]
+fn package_json_is_allowed_under_maintenance_but_the_bak_extension_is_not() {
+    let ws = Workspace::new("package-json-maintenance");
+    let out = establish_empty(&ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+
+    let out = stage_with_clearance(&ws, "package.json", FIXTURE_PACKAGE_JSON, "maintenance");
+    assert!(
+        out.contains("\"outcome\":\"staged\""),
+        "package.json should be writable under maintenance: {out}"
+    );
+
+    let out = stage_with_clearance(&ws, "package.json.bak", FIXTURE_PACKAGE_JSON, "maintenance");
+    assert!(
+        out.contains("\"outcome\":\"rejected\""),
+        "package.json.bak must stay rejected — the allowlist is exact-match, not a prefix: {out}"
+    );
+    assert!(
+        !out.to_lowercase().contains("lockfile"),
+        "package.json.bak is not a lockfile; it should fail the ordinary allowlist check, not the lockfile-specific one: {out}"
+    );
+
+    reset(&ws);
+}
+
+/// A `package.json` change lands together with the envelope-computed lockfile,
+/// in the SAME commit.
+#[test]
+fn package_json_change_lands_with_the_envelope_computed_lockfile_in_the_same_commit() {
+    let ws = Workspace::new("manifest-plus-lockfile");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    let out = stage_with_clearance(
+        &ws,
+        "package.json",
+        FIXTURE_PACKAGE_JSON_BUMPED,
+        "maintenance",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "bump the version");
+    assert!(out.contains("\"outcome\":\"committed\""), "{out}");
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_ne!(head_before, head_after, "a new commit should have landed");
+
+    let (ok, files) = git(
+        ws.path(),
+        &["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+    );
+    assert!(ok, "diff-tree: {files}");
+    let mut committed: Vec<&str> = files.lines().collect();
+    committed.sort_unstable();
+    assert_eq!(
+        committed,
+        vec!["package-lock.json", "package.json"],
+        "the manifest change and the envelope-computed lockfile should land together: {files:?}"
+    );
+
+    let lockfile = fs::read_to_string(ws.path().join("package-lock.json")).expect("read lockfile");
+    assert!(
+        lockfile.contains("0.0.1"),
+        "the lockfile should reflect the resolved manifest, not a stale one"
+    );
+}
+
+/// Verification (resolve → install → build → audit) leaves the tree clean, so a
+/// second changeset can still `begin` right afterward.
+#[test]
+fn verification_leaves_the_tree_clean_so_a_second_changeset_can_begin() {
+    let ws = Workspace::new("clean-after-verify");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    let out = begin(&ws);
+    assert!(
+        out.contains("\"outcome\":\"begun\""),
+        "a fresh changeset should open cleanly right after verification: {out}"
+    );
+    reset(&ws);
+}
+
+/// The audit gate is a non-regression gate: a changeset that introduces an
+/// advisory absent at `HEAD` is refused.
+#[test]
+fn audit_gate_fails_a_changeset_that_introduces_a_new_advisory() {
+    let ws = Workspace::new("audit-new-advisory");
+    land_fixture_with_package_json(&ws, FIXTURE_PACKAGE_JSON, "add the fixture ts project");
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    // A dependency with real, well-known high-severity advisories, absent from
+    // the baseline just committed above.
+    let out = stage_with_clearance(
+        &ws,
+        "package.json",
+        FIXTURE_PACKAGE_JSON_WITH_VULNERABLE_DEP,
+        "maintenance",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "add a dependency that introduces a new advisory");
+    assert!(
+        out.contains("\"outcome\":\"build_failed\""),
+        "a newly introduced advisory must fail the changeset: {out}"
+    );
+    assert!(
+        out.to_lowercase().contains("newly introduced"),
+        "the failure detail should name the audit gate: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head_before, head_after,
+        "HEAD must not move when the audit gate fails"
+    );
+}
+
+/// Land a baseline that already carries a dependency finding, committed
+/// DIRECTLY with `git` — bypassing the envelope entirely. This is the only way
+/// such a baseline can exist: the gate itself never lets a changeset that
+/// introduces a new advisory land (see the test above), so a "pre-existing"
+/// finding can only ever be inherited — an adopted predecessor, or history that
+/// predates the audit gate — never freshly introduced through the envelope.
+fn land_inherited_baseline_with_vulnerable_dep(ws: &Workspace) {
+    let out = establish_empty(ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+
+    fs::write(
+        ws.path().join("package.json"),
+        FIXTURE_PACKAGE_JSON_WITH_VULNERABLE_DEP,
+    )
+    .expect("write package.json");
+    fs::write(ws.path().join("tsconfig.json"), FIXTURE_TSCONFIG).expect("write tsconfig.json");
+    fs::create_dir_all(ws.path().join("src")).expect("create src/");
+    fs::write(ws.path().join("src/index.ts"), FIXTURE_INDEX_TS_GREEN).expect("write src/index.ts");
+
+    // Real resolution, run directly rather than through the envelope — standing
+    // in for however this predecessor's lockfile actually came to be before this
+    // outcome was ever under the envelope's audit gate.
+    let status = Command::new("npm")
+        .args(["install", "--package-lock-only", "--ignore-scripts"])
+        .current_dir(ws.path())
+        .status()
+        .expect("run npm install directly");
+    assert!(status.success(), "npm install --package-lock-only failed");
+
+    let (ok, out) = git(
+        ws.path(),
+        &[
+            "add",
+            "--",
+            "package.json",
+            "tsconfig.json",
+            "src/index.ts",
+            "package-lock.json",
+        ],
+    );
+    assert!(ok, "git add for inherited baseline: {out}");
+    let (ok, out) = git(
+        ws.path(),
+        &[
+            "commit",
+            "--quiet",
+            "-m",
+            "inherited baseline (predates the audit gate)",
+        ],
+    );
+    assert!(ok, "git commit for inherited baseline: {out}");
+}
+
+/// The audit gate is non-regression, not zero-vulns: a changeset that leaves
+/// PRE-EXISTING findings unchanged is allowed to land.
+#[test]
+fn audit_gate_allows_a_changeset_that_leaves_pre_existing_findings_unchanged() {
+    let ws = Workspace::new("audit-pre-existing");
+    land_inherited_baseline_with_vulnerable_dep(&ws);
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    // An unrelated manifest edit that does not touch the vulnerable dependency's
+    // version: resolution reruns and reproduces the identical advisory set.
+    let out = stage_with_clearance(
+        &ws,
+        "package.json",
+        FIXTURE_PACKAGE_JSON_WITH_VULNERABLE_DEP_DESCRIBED,
+        "maintenance",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "unrelated manifest edit");
+    assert!(
+        out.contains("\"outcome\":\"committed\""),
+        "pre-existing findings that are merely unchanged must not block: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_ne!(head_before, head_after, "a new commit should have landed");
+}
+
+/// `envelope refresh-deps`: the pure-transitive trusted operation stages the
+/// recomputed lockfile without any `package.json` change.
+#[test]
+fn refresh_deps_stages_the_lockfile_without_touching_package_json() {
+    let ws = Workspace::new("refresh-deps");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    // Simulate a lockfile that has drifted stale relative to what resolution
+    // would produce today, bypassing the envelope directly (standing in for
+    // however such drift actually arises), so `refresh-deps` has real
+    // resolution work to do rather than reproducing a byte-identical lockfile.
+    fs::write(
+        ws.path().join("package-lock.json"),
+        br#"{"name":"fixture","version":"0.0.0","lockfileVersion":3,"stale":true}"#,
+    )
+    .expect("write a deliberately stale lockfile");
+    let (ok, out) = git(ws.path(), &["add", "--", "package-lock.json"]);
+    assert!(ok, "git add: {out}");
+    let (ok, out) = git(
+        ws.path(),
+        &["commit", "--quiet", "-m", "simulate a stale lockfile"],
+    );
+    assert!(ok, "git commit: {out}");
+
+    let out = envelope(&["refresh-deps", "--repo", ws.path_str()], &[]);
+    assert!(
+        out.contains("\"outcome\":\"staged\""),
+        "refresh-deps should stage the recomputed lockfile: {out}"
+    );
+    assert!(
+        out.contains("package-lock.json"),
+        "refresh-deps should name the lockfile it staged: {out}"
+    );
+
+    let out = commit(&ws, "refresh dependencies");
+    assert!(out.contains("\"outcome\":\"committed\""), "{out}");
+
+    // `npm install --package-lock-only` updates an existing lockfile in place
+    // rather than replacing it wholesale (an unrelated top-level key like our
+    // injected `"stale"` marker survives), so the real signal that resolution
+    // actually ran is the resolved dependency data it must have freshly
+    // computed — our stale stub had none.
+    let lockfile = fs::read_to_string(ws.path().join("package-lock.json")).expect("read lockfile");
+    assert!(
+        lockfile.contains("\"integrity\""),
+        "the lockfile should have been recomputed by refresh-deps with real resolution data: {lockfile}"
     );
 }
