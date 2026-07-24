@@ -73,9 +73,18 @@ const NEVER_WRITE_FILES: &[&str] = &["package-lock.json", "pnpm-lock.yaml", "yar
 const FORBIDDEN_WRITE_PREFIXES: &[&str] = &[
     "src/api/",  // the contract/client for the provided backend — not the agent's to change
     "src/data/", // the data/fixture contract — frozen under maintenance, exactly like src/api/
-    "secrets/",  // credentials must never be written into the frontend bundle
-    "infra/",    // build and deploy pipeline configuration
-    "envelope/", // the trusted core may not be edited by the agent it governs
+    // The design system's primitives (ADR 0012, Phase D): the agent composes
+    // UI FROM these, but must not fork or edit them — the same discipline as
+    // `src/api/` and `src/data/` above. Genesis may still write this zone (it
+    // is how the primitives are first created — see the module doc); only
+    // Maintenance freezes it. The other half of this invariant — that a
+    // staged UI file actually USES the design system, not merely leaves it
+    // untouched — is content-level and lives in `worktree.rs`'s design
+    // stage (`design.rs`), which reach cannot express.
+    "src/design-system/",
+    "secrets/",        // credentials must never be written into the frontend bundle
+    "infra/",          // build and deploy pipeline configuration
+    "envelope/",       // the trusted core may not be edited by the agent it governs
     "tests/contract/", // the frozen reproducer oracle (ADR 0011) — see FROZEN_ORACLE_PREFIX below
 ];
 
@@ -280,6 +289,24 @@ mod tests {
     #[test]
     fn maintenance_forbids_outside_allowlist() {
         assert!(!maintenance("scripts/deploy.sh").is_empty());
+    }
+
+    #[test]
+    fn maintenance_forbids_the_design_system() {
+        // ADR 0012 (Phase D): the design system's primitives are frozen under
+        // maintenance, exactly like src/api/ and src/data/ — the agent
+        // composes UI from them but cannot fork or edit them.
+        assert!(!maintenance("src/design-system/Button.tsx").is_empty());
+        assert!(!maintenance("src/design-system/index.ts").is_empty());
+    }
+
+    #[test]
+    fn genesis_allows_the_design_system_maintenance_freezes() {
+        // Genesis must be able to establish the design system in the first
+        // place — the primitives have to come from somewhere; only
+        // Maintenance freezes the zone once the outcome has launched, same
+        // footing as src/data/ above.
+        assert!(genesis("src/design-system/Button.tsx").is_empty());
     }
 
     #[test]

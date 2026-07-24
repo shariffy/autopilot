@@ -7,6 +7,7 @@
 
 mod agent;
 mod decision_log;
+mod design;
 mod guardrails;
 mod harness;
 mod invariants;

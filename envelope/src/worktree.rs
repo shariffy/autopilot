@@ -24,6 +24,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::design;
+
 /// The identity stamped as **author** on a changeset commit and as **author
 /// and committer** on the `establish` baseline: `(name, email)`. The advisor
 /// proposed the change; it never runs `git` itself and holds no git identity of
@@ -212,6 +214,22 @@ impl BuildVerifier {
         let (ok, out) = run_in(repo, pm, Self::build_args(pm));
         log.push_str(&out);
         if !ok {
+            return (false, log);
+        }
+
+        // 3.2. Design conformance (ADR 0012, Phase D): a content-level check the
+        // pure `reach` kernel can never make — it sees a path and a byte
+        // COUNT, never the bytes (`invariants::reach`'s module doc). Lints the
+        // staged `.tsx` files under `src/pages/`/`src/components/` against the
+        // small, explicit rule set in `design.rs`: no raw `<button>`/`<input>`/
+        // `<select>`/`<a>`, no inline `style={{`, and at least one import from
+        // `src/design-system/` — so the agent composes UI from the frozen
+        // primitives (`invariants::reach`'s `FORBIDDEN_WRITE_PREFIXES`) rather
+        // than hand-rolling ad-hoc equivalents. No npm involved — a scan of
+        // files already written to the tree — so it runs unconditionally,
+        // before the (comparatively expensive) test stage below.
+        if let Err(detail) = design::check(repo, staged) {
+            log.push_str(&format!("\n{detail}\n"));
             return (false, log);
         }
 
