@@ -21,36 +21,44 @@ kernel (`reach`, `policy`, the outcome gate) and, as of M4, the real I/O path
 itself. The advisor runs on the Claude Agent SDK with its only write channel being
 the `envelope` binary.
 
-**M1 has run.** On 2026-07-23 the advisor read the seeded observations for a small
-admin console, chose a greenfield React+Vite+TS strategy over local fixtures, and
-landed **5 green, atomic genesis changesets** — plus a self-authored ADR — for
-$0.96 over 53 turns. See [docs/runs/0001-first-light.md](runs/0001-first-light.md).
-Everything below was ordered around producing that run; it now hardens the pieces
-it leaned on.
+**M1 has run — as one continuous history through Phase D.** The published demo
+repo is the result of a single redo on 2026-07-25 that superseded three earlier,
+separately-published runs: genesis, then three further advisor runs landing
+autonomous maintenance, a self-healing incident, and a design-governed feature,
+all as sequential commits on the *same* history rather than stitched together
+afterward. The earlier, separately-published version needed 8 operator (human)
+commits to assemble; this one needed **3**, because the design system landed
+under genesis instead of being seeded later — every later phase composed from it
+natively, with nothing further to seed. See
+[docs/runs/0001-first-light.md](runs/0001-first-light.md) for genesis; the
+per-phase summaries below describe what each run did, not which specific run —
+the current published history is the latest and only live one.
 
-**Phase B has run.** On 2026-07-24 the advisor (Sonnet 4.6) read a `posthog`
-analytics signal against the M1 outcome and landed one green, bounded maintenance
-changeset — sortable Product columns, advisor-authored / envelope-committed, with
-an ADR — for $0.26, inside the fitted Maintenance allowlist (`src/pages/` writable,
-`src/data/` frozen). Published to the demo repo.
+**Phase B: sensor-driven maintenance.** The advisor (Sonnet 4.6) read a
+`posthog` analytics signal against the genesis outcome and landed one green,
+bounded maintenance changeset — sortable Product columns, advisor-authored /
+envelope-committed, with an ADR — inside the fitted Maintenance allowlist
+(`src/pages/` writable, `src/data/` frozen). Published to the demo repo.
 
-**Phase C has run: the two-loop runtime envelope.** A change that built green but
-crashed at runtime (a dangling category lookup) was caught in production by the
-model-free **runtime trip** (`envelope monitor` read a telemetry error-rate breach
-and `git revert`ed the deploy to last-known-good), then the advisor landed a
-**durable fix** — gated by build plus a **frozen reproducer** the agent cannot
-author (`tests/contract/`, ADR 0011) — for $0.22. This partially discharges R7
-(the test stage catches build-green/runtime-broken pre-commit; the trip auto-heals
-in production); the general case stays open.
+**Phase C: the two-loop runtime envelope.** A change that built green but
+crashed at runtime (a dangling vendor-catalogue lookup) was caught in production
+by the model-free **runtime trip** (`envelope monitor` read a telemetry
+error-rate breach and `git revert`ed the deploy to last-known-good), then the
+advisor landed a **durable fix** — gated by build plus a **frozen reproducer**
+the agent cannot author (`tests/contract/`, ADR 0011). This partially discharges
+R7 (the test stage catches build-green/runtime-broken pre-commit; the trip
+auto-heals in production); the general case stays open.
 
-**Phase D has run: the design-system invariant.** Reach freezes
-`src/design-system/` under Maintenance, and a content-level verifier stage
-(`design.rs`, which reach itself cannot express — reach sees a path and a byte
-count, never the bytes) requires staged UI files to compose from the frozen
-primitives, rejecting raw `<button>`/`<input>`/`<a>` and inline `style={{}}`. On
-2026-07-24 the advisor (Sonnet 4.6) added a "Clear filters" button to the
-Products toolbar using the design-system `Button` — no raw HTML, no inline
-styles — green through the design stage, for $0.17. The residual (R11): the lint
+**Phase D: the design-system invariant.** Reach freezes `src/design-system/`
+under Maintenance, and a content-level verifier stage (`design.rs`, which reach
+itself cannot express — reach sees a path and a byte count, never the bytes)
+requires staged UI files to compose from the frozen primitives, rejecting raw
+`<button>`/`<input>`/`<a>` and inline `style={{}}`. Because genesis had already
+built the app's own component library on top of the design system, this phase
+needed no further trusted setup at all: the advisor (Sonnet 4.6) landed a "Clear
+filters" button on the Products toolbar composed entirely from the existing
+design system — no raw HTML, no inline styles — green through the design stage
+on the first attempt. The residual (R11): the lint
 is a deliberate enforceable subset, not a full composition grammar.
 
 ## The order, and why
@@ -77,27 +85,31 @@ generalise the substrate (M5) and harden for a non-local deployment (M6).
 
 ## M1 — First light: one real genesis changeset (done)
 
-**Status: done, 2026-07-23.** The end-to-end brain → envelope → green-build →
+**Status: done.** The end-to-end brain → envelope → green-build →
 committed-outcome path has run to completion. See
-[docs/runs/0001-first-light.md](runs/0001-first-light.md) for the full record.
+[docs/runs/0001-first-light.md](runs/0001-first-light.md) for the full record —
+that record describes the genesis run underlying the currently-published demo
+repo, superseding two earlier separately-run and separately-published attempts.
 
 **Why first.** The boundary was built and the ledger seeded, but that path had
 never run. Until it did, every claim about the system was a claim about code that
 had not been exercised together. This milestone was not a feature; it was turning
 the key.
 
-**What landed.** A real run of the advisor against the two seeded observations: the
-agent read them, chose its own strategy — greenfield React+Vite+TS over local JSON
-fixtures, no predecessor to adopt (per [ADR 0005](adr/0005-changesets-clearances-and-observation-driven-genesis.md)
+**What landed.** A real run of the advisor against three seeded observations: the
+agent read them, chose its own strategy — greenfield React+Vite+TS over local
+fixtures, including its own internal UI component library, no predecessor to
+adopt (per [ADR 0005](adr/0005-changesets-clearances-and-observation-driven-genesis.md)
 §3 the choice is the agent's) — and landed **five** green, atomic, reach-bounded
-genesis changesets into a new outcome (`admin-console/workspace`), opening
-`docs/adr/0001` in the outcome with its strategy per [ADR 0006](adr/0006-inputs-and-decisions-as-append-only-ledgers.md)
+genesis changesets into a new outcome, opening `docs/adr/0001` in the outcome
+with its strategy per [ADR 0006](adr/0006-inputs-and-decisions-as-append-only-ledgers.md)
 §3.
 
 **Where it lives.** `advisor/` (the run), the outcome repo (external, not
-vendored, at `admin-console/workspace`), and the project's audit journal
-(`admin-console/advisor-audit.jsonl`: 1 `establish`, 33 `stage`, 5 `commit`
-records).
+vendored — see [autopilot-demo-admin-console](https://github.com/shariffy/autopilot-demo-admin-console)),
+and the project's audit journal (1 `establish`, 53 `stage`, 7 `commit` attempts
+of which 5 landed, and one `refresh_dependencies` call — the agent reaching for
+the dependency-maintenance tool from ADR 0009 on its own, unprompted).
 
 **Exit criterion — met.** Five committed genesis changesets exist in the outcome,
 each build green, and the audit ledger records the establish→stage→commit
@@ -179,55 +191,95 @@ neither depended on M3–M6.
 - `advisor/src/loop.ts` gains `maintenanceSystemPrompt`, selected by
   `opts.ctx.clearance` in `runLoop`. It briefs the agent that the outcome
   already exists and already builds (`establish_workspace` is not part of the
-  job), to read the sensor source(s) before deciding anything, to propose one
-  bounded change, and — since `docs/adr/` is outside the Maintenance
-  allowlist (confirmed against the real reach rules, not asserted) — to record
-  its rationale in the `commit_changeset` intent instead of fighting the
-  boundary trying to stage an ADR.
-- A second project, `admin-console-maint/` (external to this repo, a sibling of
-  `admin-console/`, not tracked here — same convention as ADR 0003), holds a
-  git clone of the M1 outcome as its workspace, a `posthog` sensor
-  (`sensors/posthog/events.json` + `README.md`) framed explicitly as a static
-  export standing in for a live feed, one observation
-  (`observations/0001-products-list-sorting.md`) naming the sensor as its
-  source, and `project.json` set to `"clearance": "maintenance"`. The sensor's
-  signal is concrete and single-purpose: heavy, repeated clicks on the
-  Products table's Name/Price headers (which do nothing today), search
+  job), to read the sensor source(s) before deciding anything, and to propose
+  one bounded change. `docs/adr/` joined the Maintenance allowlist during
+  Phase C (below); the brief reflects that once it was true.
+- A maintenance project (external to this repo, a sibling of the outcome —
+  same convention as ADR 0003) holds a git clone of the genesis outcome as its
+  workspace, a `posthog` sensor (`events.json` + `README.md`) framed explicitly
+  as a static export standing in for a live feed, one observation naming the
+  sensor as its source, and `project.json` set to `"clearance": "maintenance"`.
+  The sensor's signal is concrete and single-purpose: heavy, repeated clicks on
+  the Products table's Name/Price headers (which do nothing today), search
   queries encoding sort intent the search box can't satisfy, and in-app
   feedback explicitly asking to sort the product list — all pointing at one
   bounded change inside `src/pages/ProductsPage.tsx`.
 
 **Where it lives.** `envelope/src/invariants/reach.rs`, `advisor/src/loop.ts`,
-and `admin-console-maint/` (external project directory).
+and the maintenance project (external).
 
-**Exit criterion — not yet met; this increment stops short of it.** The
-scaffolding is proven with the `envelope` binary directly, not the advisor: a
-stage of `src/pages/ProductsPage.tsx` under `--clearance maintenance` is
-accepted, a stage of `src/data/products.json` is rejected, a stage of
-`docs/adr/0001-*.md` is rejected (confirming the brief's claim about reach), a
-hand-written trivial edit to `ProductsPage.tsx` stages, commits green
-(`npm ci` + build + audit non-regression), and the workspace is reset back to
-its clone `HEAD` afterward. Running the advisor itself (`autopilot run` inside
-`admin-console-maint/`) — reading the `posthog` sensor and landing a real
-maintenance changeset — is a paid step, deliberately not taken in this
-increment, and the milestone stays open until it is and the result is
-reviewed.
+**Exit criterion — met.** Proven first with the `envelope` binary directly, not
+the advisor: a stage of `src/pages/ProductsPage.tsx` under
+`--clearance maintenance` is accepted, a stage of `src/data/products.json` is
+rejected, a hand-written trivial edit stages and commits green (`npm ci` +
+build + audit non-regression). Then the advisor itself, reading the `posthog`
+sensor, landed a real green maintenance changeset — sortable Product columns —
+advisor-authored, envelope-committed.
+
+## Phase C — The runtime envelope and the frozen oracle (done)
+
+**Status: done.** M1 through Phase B verify a change before it lands; nothing
+protected an outcome once a verified change was already live and behaving
+badly at runtime. "Elevated error rate" is a flight-envelope-protection
+scenario by name, and the system had no runtime response to it at all — a gap
+in the thesis, not just a residual.
+
+**Why here.** R7 (build-real, UI-verification-not) is the load-bearing residual
+for a frontend, and this closes the load-bearing half of it — a change that
+compiles but breaks the page — with the piece nothing else touches: recovery
+*after* a bad change is already live, not just refusal before one lands.
+Independent of M3's general case and of M5/M6.
+
+**What landed.**
+
+- **The fast loop — `envelope monitor` (`runtime.rs`).** Reads trusted
+  telemetry and, if the error rate breaches a threshold, reverts the deployed
+  change with `git revert`, stamped as the envelope's own act — no model
+  consulted. This is the flight-envelope-protection response: trip to a known
+  safe state immediately, improve later, never in the critical path.
+- **The slow loop — a test stage in `worktree::BuildVerifier`.** Runs the
+  outcome's own `npm test` after the build, so a change that compiles but
+  breaks a tested path fails the changeset before it can ever commit.
+- **The frozen oracle — `tests/contract/`.** Never writable by the agent under
+  any clearance (`invariants::reach`). The reproducer that says what "fixed"
+  means must come from evidence the agent didn't produce — the telemetry
+  captures the failing case, the frozen test replays it — or the agent could
+  certify its own bug.
+- Recorded in [ADR 0011](adr/0011-the-runtime-envelope-and-the-frozen-oracle.md);
+  the mitigation is threat T14 in the [threat model](THREAT_MODEL.md). Two
+  residuals stay open: a wrong-answer (non-throwing) fault still needs a human
+  oracle, and telemetry provenance is assumed, not authenticated.
+
+**Where it lives.** `envelope/src/runtime.rs`, `envelope/src/worktree.rs`,
+`envelope/src/invariants/reach.rs`.
+
+**Exit criterion — met.** A change that builds green but crashes at runtime was
+deployed as trusted setup (a foreign-key lookup with a dangling reference the
+frozen fixtures — not the agent — introduced). `envelope monitor` tripped on
+the resulting telemetry breach and reverted it with no model involved,
+restoring the frozen reproducer to green. The advisor then read the incident
+(via a `cloudwatch`-style sensor carrying the captured failing case) and landed
+a durable fix — a safe fallback for the missing case — gated by the same
+frozen reproducer it could not itself edit, advisor-authored,
+envelope-committed.
 
 ## Phase D — The design-system invariant (done)
 
-**Status: done 2026-07-24.** Reach bounds *where* the agent may write; nothing
-bounded *what a page is made of* until now. Phase B's own ADR 0002 is the
-concrete evidence this gap is real, not theoretical: it added inline styles to
-`SortableHeader.tsx` and said why in the record — `src/index.css` is outside
-Maintenance reach, and a separate stylesheet for one small component felt
-disproportionate. A reasonable call inside a boundary with no opinion about UI
-composition; exactly how a fitted product surface erodes one locally-cheap
-decision at a time.
+**Status: done.** Reach bounds *where* the agent may write; nothing bounded
+*what a page is made of* before this. The gap was first demonstrated
+concretely: an earlier maintenance changeset, built before this invariant
+existed, added inline styles to a small component and said why in its own
+record — a separate stylesheet felt disproportionate for one component, a
+reasonable call inside a boundary with no opinion about UI composition, and
+exactly how a fitted product surface erodes one locally-cheap decision at a
+time. That is precisely the failure mode this milestone closes; the current
+published history no longer contains that specific example, because this
+invariant has applied to every maintenance changeset from Phase B onward.
 
 **Why here.** Independent of M3–M6 below — none of them touch UI composition —
-and it closes a gap Phase B's own history had just demonstrated. Waiting would
-mean shipping more maintenance changesets through a boundary already known to
-tolerate the failure mode.
+and it closes a gap already demonstrated to be real, not theoretical. Waiting
+would mean shipping more maintenance changesets through a boundary already
+known to tolerate the failure mode.
 
 **What landed.**
 
@@ -250,42 +302,40 @@ tolerate the failure mode.
 - `advisor/src/loop.ts`'s `maintenanceSystemPrompt` now tells the agent the
   design system exists, is frozen, and that a rejection here means "compose
   this from the design system," not a bug to route around.
-- A new scenario project, `admin-console-design/` (external to this repo,
-  sibling to `admin-console/`): a clone of the M1/Phase B outcome, a seeded
-  design system (`Button`, `TextInput`, `Card`, `Badge`), a trusted-setup
-  migration of `ProductsPage.tsx` to compose from it (so a *conformant* staged
-  change to that page stays conformant, and a violating one is the clear
-  deviation — the stage never retroactively lints the rest of the app, which
-  still uses raw HTML), and one observation asking for a small change (a
-  "Clear filters" button) satisfiable entirely from the primitives already in
-  place.
+- The capability was first validated against a scenario project seeded with a
+  design system and a page migrated onto it as trusted setup — proving,
+  directly against the `envelope` binary and free of any model, that a
+  conformant change commits, a raw-`<button style={{...}}>` change is rejected
+  naming the file and the rule, and `src/design-system/` is frozen under
+  Maintenance but writable under Genesis.
 - Recorded in [ADR 0012](adr/0012-the-design-system-invariant.md); the
   two-part invariant (frozen primitives + required use) is threat T13 in the
   [threat model](THREAT_MODEL.md), with the lint-vs-full-grammar gap as R11.
+- In the current published history, no separate seeding was needed at all:
+  genesis had already built the app's own component library on the design
+  system (see M1 above), so this phase is purely the advisor composing a
+  feature from infrastructure that already existed — the strongest form of the
+  demonstration, not a constructed one.
 
 **Where it lives.** `envelope/src/design.rs`, `envelope/src/worktree.rs`,
-`envelope/src/invariants/reach.rs`, `advisor/src/loop.ts`, and
-`admin-console-design/` (external project directory).
+`envelope/src/invariants/reach.rs`, `advisor/src/loop.ts`.
 
-**Exit criterion — met, for the infrastructure; the advisor run is a separate
-step.** Proven directly against the `envelope` binary, FREE (no model, no
-advisor): a hand-written conformant change (a `Button` from the design system)
-stages and commits green — build, the design stage, test, and audit all pass;
-the identical feature built from a raw `<button style={{...}}>` is rejected at
-commit with the design stage naming both the file and the specific rules
-broken; staging a write to `src/design-system/Button.tsx` under Maintenance is
-rejected by `reach`, and the identical write under Genesis is accepted; the
-scenario workspace is reset back to its baseline afterward. Running the
-advisor itself (`autopilot run` inside `admin-console-design/`) against the
-"Clear filters" observation is a paid step, deliberately not taken in this
-increment — the parent's to run.
+**Exit criterion — met.** The infrastructure was proven free of any model
+first (conformant commits, a raw-HTML change rejected naming the rule, the
+frozen-vs-Genesis reach split). Then the advisor itself, reading a direct
+observation asking for a "Clear filters" button, landed it composed entirely
+from the existing design system — no raw HTML, no inline styles, green through
+the design stage on the first attempt — advisor-authored, envelope-committed.
 
 ## M3 — Agentic UI verification (discharges R7)
 
-**Why.** Today verification is the outcome's own `npm run build` — a genuine
-typecheck + bundle gate the agent cannot self-certify (half of T3 is real). But for
-a frontend the residual risk that matters is the change that compiles cleanly and
-breaks the page. [R7](THREAT_MODEL.md) names this the load-bearing piece.
+**Why.** Verification today is the outcome's own build, plus — since Phase C — a
+test stage and a frozen-reproducer pattern for the *specific* failing case a
+sensor already captured (ADR 0011). What is still missing is the *general*
+case: nothing drives the rendered page for a change with no seeded reproducer
+and confirms it actually works, only that it compiles and passes whatever
+tests already exist. [R7](THREAT_MODEL.md) names this the load-bearing piece
+that remains.
 
 **What lands.** A UI verification step inside the monitor, layered *after* the build,
 that drives the rendered page and confirms the change actually works before

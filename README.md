@@ -71,29 +71,35 @@ See [advisor/README](advisor/README.md).
 
 ## Status
 
-Runnable, not yet production-hardened — and it has run. On 2026-07-23 the advisor
-took a small admin console from nothing to a working app: it read two seeded
+Runnable, not yet production-hardened — and it has run. On 2026-07-25 the advisor
+took a small admin console from nothing to a working app: it read three seeded
 observations, chose its own strategy (greenfield React+Vite+TS over local
-fixtures), and landed **5 green, atomic genesis changesets** plus a self-authored
-ADR, for $0.96 over 53 turns, none of it requiring the agent to be trustworthy —
-every commit passed through the envelope's own build gate. See
+fixtures, including building its own internal UI component library), and landed
+**5 green, atomic genesis changesets** plus a self-authored ADR, for $2.13 over
+77 turns, none of it requiring the agent to be trustworthy — every commit passed
+through the envelope's own build gate. See
 [docs/runs/0001-first-light.md](docs/runs/0001-first-light.md).
 
 The outcome it produces is a real, separate repository —
 **[autopilot-demo-admin-console](https://github.com/shariffy/autopilot-demo-admin-console)**
 — and its `git log` is the whole demonstration, told as one continuous history
 rather than scattered across repos: the untrusted **advisor** as author, the
-trusted **envelope** as committer, on every change the system landed, in order:
+trusted **envelope** as committer, on every change the system landed, in order.
+Of 13 commits, only **3 are the operator's**, each doing only what the agent
+structurally cannot (seeding a frozen test oracle, a deliberately-not-agent-authored
+bug, and the README) — because the design system landed under genesis, later
+phases needed no further trusted setup at all:
 
-1. **Genesis** — the app built from nothing.
+1. **Genesis** — the app built from nothing, including its own component library.
 2. **Autonomous maintenance** — a sortable-columns feature landed from a real
    analytics signal, unprompted by a human ask.
 3. **A self-healing incident** — a change built green but crashed in production;
    a model-free **runtime trip** (`git revert` to last-known-good) caught it, then
    the advisor landed a durable fix under a frozen reproducer it cannot author
    (ADR 0011).
-4. **Design governance** — the envelope began rejecting ad-hoc UI, so the next
-   feature composed only from a sanctioned design system (ADR 0012).
+4. **Design governance** — a feature request landed composed entirely from the
+   design system genesis had already established; the conformance stage has
+   applied to every change since Phase 2, not just this one (ADR 0012).
 
 The trust boundary is real and the build is a genuine verification gate; the real
 (git-backed) adjudication path is under automated test
