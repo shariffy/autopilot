@@ -22,14 +22,14 @@ itself. The advisor runs on the Claude Agent SDK with its only write channel bei
 the `envelope` binary.
 
 **M1 has run — as one continuous history through Phase D.** The published demo
-repo is the result of a single redo on 2026-07-25 that superseded three earlier,
-separately-published runs: genesis, then three further advisor runs landing
-autonomous maintenance, a self-healing incident, and a design-governed feature,
-all as sequential commits on the *same* history rather than stitched together
-afterward. The earlier, separately-published version needed 8 operator (human)
-commits to assemble; this one needed **3**, because the design system landed
-under genesis instead of being seeded later — every later phase composed from it
-natively, with nothing further to seed. See
+repo is the result of a single redo on 2026-07-25 that superseded a
+separately-published version needing 8 operator (human) commits to assemble.
+This one needed **2**, both structurally irreducible: the frozen test oracle a
+runtime fix is judged against (never agent-writable under any clearance), and
+one deliberately-not-agent-authored change (an agent given the identical
+feature as a plain maintenance ask wrote it safely on its own — see
+[docs/runs/0001-first-light.md](runs/0001-first-light.md) for that experiment).
+Even the README landed as the agent's own genesis-time work. See
 [docs/runs/0001-first-light.md](runs/0001-first-light.md) for genesis; the
 per-phase summaries below describe what each run did, not which specific run —
 the current published history is the latest and only live one.
@@ -105,13 +105,14 @@ genesis changesets into a new outcome, opening `docs/adr/0001` in the outcome
 with its strategy per [ADR 0006](adr/0006-inputs-and-decisions-as-append-only-ledgers.md)
 §3.
 
-**Where it lives.** `advisor/` (the run), the outcome repo (external, not
-vendored — see [autopilot-demo-admin-console](https://github.com/shariffy/autopilot-demo-admin-console)),
-and the project's audit journal (1 `establish`, 53 `stage`, 7 `commit` attempts
-of which 5 landed, and one `refresh_dependencies` call — the agent reaching for
-the dependency-maintenance tool from ADR 0009 on its own, unprompted).
+**Where it lives.** `advisor/` (the run, across two passes), the outcome repo
+(external, not vendored — see [autopilot-demo-admin-console](https://github.com/shariffy/autopilot-demo-admin-console)),
+and the project's audit journal, which records — across both passes — the
+establish, every stage, and every commit attempt including retries after a
+BUILD_FAILED, plus one `refresh_dependencies` call: the agent reaching for the
+dependency-maintenance tool from ADR 0009 on its own, unprompted.
 
-**Exit criterion — met.** Five committed genesis changesets exist in the outcome,
+**Exit criterion — met.** Six committed genesis changesets exist in the outcome,
 each build green, and the audit ledger records the establish→stage→commit
 sequence that produced them. This had no residual to discharge — it was the
 precondition that made M3 and M4 testable against something real, and M4 (below)

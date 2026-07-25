@@ -85,10 +85,15 @@ The outcome it produces is a real, separate repository —
 — and its `git log` is the whole demonstration, told as one continuous history
 rather than scattered across repos: the untrusted **advisor** as author, the
 trusted **envelope** as committer, on every change the system landed, in order.
-Of 13 commits, only **3 are the operator's**, each doing only what the agent
-structurally cannot (seeding a frozen test oracle, a deliberately-not-agent-authored
-bug, and the README) — because the design system landed under genesis, later
-phases needed no further trusted setup at all:
+Of 13 commits, only **2 are the operator's**, each doing only what the agent
+structurally cannot: seeding the frozen test oracle a runtime fix is judged
+against (never agent-writable, under any clearance), and the one change
+deliberately not agent-authored either — an agent given the same feature as a
+plain, non-leading maintenance ask wrote it safely on its own, unprompted
+either way, so reproducing a "shipped and crashed" scenario honestly meant
+constructing it as trusted setup rather than coaxing a bug out of a later run.
+The design system and even the README both landed as the agent's own work
+under genesis, so no later phase needed further seeding at all:
 
 1. **Genesis** — the app built from nothing, including its own component library.
 2. **Autonomous maintenance** — a sortable-columns feature landed from a real
