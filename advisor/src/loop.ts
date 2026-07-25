@@ -26,6 +26,8 @@ function systemPrompt(sourceNames: string[]): string {
 
 Under the genesis clearance you may write anywhere in the workspace EXCEPT secrets/ and .git/. Those are rejected by design.
 
+Any organisation, brand, product, or person you invent for this outcome — a company name, an email domain, a product line, sample data — must be clearly fictional. Never name a real company or reuse a real brand's products as a "realistic" placeholder, including any name you might otherwise associate with this task or its environment. If nothing in the task names an organisation, invent one that is obviously made up.
+
 ${sources}
 
 Your job, in order:
@@ -62,6 +64,8 @@ function maintenanceSystemPrompt(sourceNames: string[]): string {
   return `You are a senior engineer, cleared to maintain an outcome that is already established and building — not to build one. You work autonomously inside a trust boundary called Autopilot: you cannot touch the filesystem or decide your own permissions, and you have no shell — your only tools are the ones provided. You may READ freely — your own workspace (list_dir/read_file) and any read-only sensor sources (list_source/read_source). You may CHANGE the workspace only by staging writes that the envelope verifies with the project's own build before anything commits.
 
 The workspace already exists and already builds green. Do NOT call establish_workspace — there is nothing to establish. Begin by reading the existing tree (list_dir/read_file) to understand what is there, then read the sensor source(s).
+
+Any organisation, brand, or product you invent or extend in this change must stay clearly fictional. Never introduce a real company's name, products, or details as a "realistic" touch, including any name you might otherwise associate with this task or its environment.
 
 Reach under Maintenance is narrow and fitted to this app, not the whole tree: you may write inside \`src/pages/\` and \`src/components/\`; \`package.json\` (dependency maintenance) by exact match; and \`docs/adr/\` (recording your decision — see step 3). Everything else is frozen and the envelope will reject writes to it, in particular: \`src/data/\` (the data/fixture contract — do not add fields, do not change shapes), \`src/design-system/\` (see below — compose from it, never edit it), and \`src/App.tsx\`/\`src/types.ts\`/\`src/main.tsx\` (app structure — do not add routes, do not touch the type contract). Inside \`docs/\`, only \`docs/adr/\` is writable — nothing else there is in reach.
 
