@@ -79,7 +79,9 @@ Each threat assumes a capable, adversarial agent.
 | T11 | Author a lockfile to smuggle an attacker-controlled `resolved`/`integrity` pair (npm binds integrity to whatever was downloaded, not to the registry's published artifact), or to make dependency lifecycle scripts execute inside the verifier | `package-lock.json`/`pnpm-lock.yaml`/`yarn.lock` are an exact-match never-write zone under **every** clearance, Genesis included; the agent may propose `package.json` intent only, and the trusted core computes the lockfile during verification, with `--ignore-scripts` on resolve and install | `invariants/reach.rs` (`NEVER_WRITE_FILES`), `worktree.rs::BuildVerifier` (ADR 0009) |
 | T12 | Introduce a dependency with a known, filed security advisory — directly or transitively | Audit non-regression gate: `npm audit` on the changeset's tree is compared against the same command run against `HEAD`'s manifest and lockfile; a changeset that introduces an advisory ID absent from that baseline fails closed. Pre-existing findings (inherited, or predating this gate) do not themselves block. Where `HEAD` carries no manifest there is no baseline to regress from, so the establishing genesis changeset records its findings for the human launch gate rather than being refused | `worktree.rs::BuildVerifier::run` (ADR 0009), `tests/worktree_lifecycle.rs` |
 | T13 | Introduce ad-hoc UI — a raw `<button>`/`<input>`/`<select>`/`<a>` or a hand-rolled `style={{...}}` — bypassing the sanctioned design system, one maintenance changeset at a time (concretely: ADR 0002 added inline styles and named reach as the reason) | Two-part invariant: `src/design-system/` is a frozen `reach` zone under Maintenance (the agent composes from the primitives, cannot fork or edit them), and a content-level verifier stage lints every staged `.tsx` file under `src/pages/`/`src/components/`, rejecting the banned raw tags and inline styles and requiring at least one design-system import — a `reach` invariant alone cannot express the second half, since reach sees a path and a byte count, never the bytes | `invariants/reach.rs` (`FORBIDDEN_WRITE_PREFIXES`), `design.rs`, `worktree.rs::BuildVerifier::run` (ADR 0012), `tests/worktree_lifecycle.rs` |
-| T14 | Ship a change that builds green but breaks at runtime (the R7 gap) | Two layers (ADR 0011): a **test stage** runs the outcome's own `npm test` after the build, so a compile-clean change that breaks a tested path fails the changeset pre-commit; and a model-free **runtime trip** (`envelope monitor`) reads trusted telemetry and, on an error-rate breach, `git revert`s the deployed change to last-known-good, restoring service before any advisor is consulted. The reproducer that judges a fix lives in a frozen `tests/contract/` zone the agent can never author | `runtime.rs`, `worktree.rs::BuildVerifier` (test stage), `invariants/reach.rs` (frozen oracle), `tests/worktree_lifecycle.rs` |
+| T14 | Ship a change that builds green but breaks at runtime (the R7 gap) | Two layers (ADR 0011): a **test stage** runs the outcome's own `npm test` after the build, so a compile-clean change that breaks a tested path fails the changeset pre-commit; and a model-free **runtime trip** (`envelope monitor`) reads trusted telemetry and, on an error-rate breach, `git revert`s the deployed change to last-known-good, restoring service before any advisor is consulted. The reproducer that judges a fix lives in a frozen `tests/contract/` zone the agent can never author. As of ADR 0013 the test stage is **mandatory, not opt-in**: its absence now fails a real changeset the same way a failing script does (it is no longer skipped when the outcome has no test script), so an outcome that never adopted tests at all is caught by this stage too, not exempted from it — see ADR 0013 for why the policy changed and the `changeset_is_open` mechanism that keeps `Establish::Clone` still able to adopt a legacy, test-less predecessor | `runtime.rs`, `worktree.rs::BuildVerifier` (test stage), `invariants/reach.rs` (frozen oracle), `tests/worktree_lifecycle.rs` |
+| T15 | Ship a change that builds green and passes unit tests but **throws or fails to render** at runtime, with no seeded reproducer and no prior incident. This is the crash class only — a change that renders successfully but renders the *wrong thing* is **not** covered, and R7 records that as still open | An outcome-authored `tests/e2e/` suite, run as its own stage immediately after the unit-test stage, drives a real (headless) browser against the actually-built artifact (`vite build`'s `dist/`, not a jsdom stand-in) and fails the changeset on any thrown or unhandled render error. Both `test` and `test:e2e` are **mandatory** (ADR 0013) — absence fails the changeset, including the first genesis changeset — so this holds for every changeset this system produces, not conditionally on the outcome having opted in | `worktree.rs::BuildVerifier` (e2e stage, ADR 0013), `tests/worktree_lifecycle.rs` |
+| T16 | Replace a gate script with a vacuous no-op (or inject a `pretest`/`posttest` hook that silences it) in the same `package.json` changeset that introduces a bug — the gate runs the tampered command and reports green | Under Maintenance, the `scripts` object in `package.json` must be **byte-identical** to `HEAD`'s — whole object, not just the three gate keys, so an auto-run npm hook cannot sneak past. The clearance is persisted as line 1 of the changeset marker file (`.git/envelope-changeset`, a never-writable zone for the agent) at `open_changeset`/`stage` time and read back by `commit` — preventing a stage-under-Maintenance/commit-claiming-Genesis split. Genesis writes scripts freely; if HEAD has no `package.json` there is no baseline to compare against | `worktree.rs` (`open_changeset`, `changeset_clearance`, `BuildVerifier::run` scripts-freeze step, ADR 0013), `tests/worktree_lifecycle.rs` |
 
 ## Residual risks and assumptions to discharge
 
@@ -108,30 +110,19 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
 - **R6 — Audit trail is not tamper-evident.** It is append-only in memory and
   written to a file; it is not signed or hash-chained, so a compromise of the host
   could rewrite it.
-- **R7 — Verifier: build is real, UI verification is not (partially discharges
-  A5).** The in-memory harness seeds a stub; the real `adjudicate` path runs the
-  repo's own `npm run build` (typecheck + bundle) inside the monitor, so the
-  typecheck/compile half of T3 is genuinely enforced and the agent cannot
-  self-certify. **ADR 0011 narrows this from both ends** (T14): a *test stage* now
-  runs the outcome's own `npm test` after the build, so a compile-clean change that
-  breaks a tested path fails the changeset pre-commit; and a *runtime trip*
-  auto-reverts a deployed change whose telemetry error rate breaches the SLO, no
-  model in the loop. What remains open is the *general* case — agentic UI
-  verification of arbitrary rendered behaviour a seeded reproducer does not cover,
-  and the fact that a wrong-answer (non-throwing) fault still needs a human to say
-  what correct is. Most residual frontend risk is visual/UX regressions that
-  compile and pass existing tests but still look or behave wrong.
 - **R8 — The verifier executes the repo's build (new TCB surface).** Running
   `npm run build` executes whatever the build pipeline does on the host. The build
-  *definition* is protected — `package.json` is writable only as manifest intent,
-  and lockfiles are an exact-match never-write zone (T11) — so the agent cannot
-  alter the verifier it is judged by, but a written source file that the build
-  configuration imports could in principle run at build time. `--ignore-scripts`
-  on resolve and install (ADR 0009) narrows this — dependency lifecycle scripts no
-  longer run during those steps — but does not close it: the build step itself is
-  unsandboxed, and a source file the build imports still executes on the host.
-  Hardening (sandboxed/network-isolated build, pinned toolchain) is not yet done;
-  the build runs in the local environment.
+  *definition* is protected — `package.json`'s `scripts` object is frozen
+  byte-for-byte under Maintenance (T16), lockfiles are an exact-match never-write
+  zone (T11), and the `scripts` object is writable only under Genesis — so the
+  agent cannot alter the gate commands it is judged by after the outcome is
+  established. A written source file that the build configuration imports could
+  still in principle run at build time. `--ignore-scripts` on resolve and install
+  (ADR 0009) narrows this — dependency lifecycle scripts no longer run during those
+  steps — but does not close it: the build step itself is unsandboxed, and a source
+  file the build imports still executes on the host. Hardening
+  (sandboxed/network-isolated build, pinned toolchain) is not yet done; the build
+  runs in the local environment.
 - **R10 — Registry provenance and publish attestation are not verified.** The
   audit gate (T12) is a non-regression check against **known, filed** advisories —
   `npm audit`'s database. It says nothing about whether the tarball a `resolved`
@@ -154,6 +145,35 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
   would approve, or a prop combination the design system technically allows but
   never intends — is not caught. The gate narrows "ad-hoc UI" to "ad-hoc UI built
   from banned raw markup"; it does not make every staged page well-designed.
+- **R7 — UI verification is real for crashes, not for behaviour (narrowed by
+  ADR 0013; partially discharges A5).** The typecheck/compile half was already
+  genuine; ADR 0011 added the test stage and the runtime trip (T14); ADR 0013
+  adds a mandatory e2e stage that drives a real browser against the real built
+  artifact (T15). **The crash class is now closed** — a change that throws or
+  blanks the page is caught pre-commit, with no seeded reproducer needed.
+  What R7 named and this does **not** close: a change that renders
+  successfully but wrongly. R7's original wording is worth keeping honest
+  about — *"most residual frontend risk is visual/UX regressions that compile
+  and pass existing tests but still look or behave wrong"* — and that majority
+  is untouched by a gate whose only question is "did it throw." The
+  *agentic* UI verification R7 explicitly named, judging arbitrary rendered
+  behaviour rather than replaying a reproducer, is unbuilt (see R13's shared
+  mitigation). Two further limits belong here: a non-throwing wrong-answer
+  fault still needs a human to say what correct *is*, and presence of
+  `test`/`test:e2e` is a floor rather than a quality bar — nothing stops
+  either passing vacuously (an empty suite, a no-op assertion), and the specs
+  are themselves agent-authored at Genesis. The human launch gate (ADR 0005)
+  currently covers all of that.
+- **R13 — No qualitative or security code review.** A change that clears every
+  deterministic gate (build, design, test, e2e, audit) can still be poorly
+  written or contain an agent-introduced vulnerability no existing gate checks
+  for. Named as a sibling gap to R7 — both are the same underlying pattern, an
+  agent's work graded only by deterministic checks its own errors can slip
+  past — sharing a future mitigation: a deliberately-designed agentic-judge
+  pattern, not built yet (see ADR 0013 and `ROADMAP.md`'s "Not on this
+  roadmap"). Both are newly exposed to indirect prompt injection the moment
+  such a judge reads agent-authored content, which is why neither is rushed in
+  ahead of that design work.
 
 ## Out of scope
 
@@ -167,8 +187,9 @@ These are known and **not** yet mitigated. They are the honest edge of the syste
 This model is verifiable against the source: every mitigation names the module
 that implements it. The test suite exercises the policy denials and the outcome
 gate at runtime — T1, T2, T3, T4, T5, T7, T9, and T11 (see the `reach` and
-`harness` test modules) — and T10, T12, and T13 exercise the real git-backed
-path end to end, including a real `npm audit` and a real `tsc`/`vite build`
+`harness` test modules) — and T10, T12, T13, T14, T15, and T16 exercise the real
+git-backed path end to end, including a real `npm audit`, a real `tsc`/`vite build`,
+and (T15) a real headless-browser run against the actually-built artifact
 (see `tests/worktree_lifecycle.rs`). T6 and
 T8 are enforced at **compile time** rather
 than by a test:
@@ -176,3 +197,24 @@ agent-supplied verification, metrics, and guardrails are all unrepresentable in
 `Action`, and `&mut World` is never exposed — so they hold by construction. When a
 residual is discharged, move it from Residuals to Threats with its mitigation and
 a test.
+
+### Two rules for changing this document
+
+Both exist because both have already been broken here, and each cost two
+milestones before anyone noticed.
+
+1. **Quote a residual before discharging it.** Paste its current text into
+   whatever proposes the discharge, and check the mitigation against every
+   clause. M3 was written up as discharging R7 while R7's own text named
+   agentic UI verification and called visual/UX regressions *"most residual
+   frontend risk"* — neither of which the e2e stage touches. Closing a
+   residual's smaller half is not a discharge; the preamble above already
+   says so, and it was still missed by everyone who cited R7 without
+   re-reading it.
+2. **When a change alters what a threat depends on, grep this file for
+   claims about it.** ADR 0009 moved `package.json` into the Maintenance
+   write surface and left R8, in the same diff, asserting `package.json` was
+   *"outside the write allowlist, so the agent cannot alter the verifier it
+   is judged by."* The claim was falsified by the commit that shipped it. A
+   `grep -n allowlist docs/THREAT_MODEL.md` before writing the ADR is the
+   whole fix.

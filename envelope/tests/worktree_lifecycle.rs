@@ -26,11 +26,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 // ---- fixtures: a minimal TS project the real `npm`/`tsc` build can judge ----
 
+// `test`/`test:e2e` are mandatory (ADR 0013) for every changeset this
+// fixture lands, so the baseline itself must declare both, passing, or the
+// mandatory-script gate would fail every single test in this file before it
+// ever reaches whatever behaviour that test actually means to exercise. Both
+// are a plain `node -e`, not a real test runner, for the same reason the
+// pre-ADR-0013 `test` fixture below was: what the gate cares about is
+// presence and exit code, not content.
 const FIXTURE_PACKAGE_JSON: &str = r#"{
   "name": "fixture",
   "private": true,
   "version": "0.0.0",
-  "scripts": { "build": "tsc" },
+  "scripts": { "build": "tsc", "test": "node -e \"process.exit(0)\"", "test:e2e": "node -e \"process.exit(0)\"" },
   "devDependencies": { "typescript": "^5.5.4" }
 }
 "#;
@@ -63,7 +70,7 @@ const FIXTURE_PACKAGE_JSON_BUMPED: &str = r#"{
   "name": "fixture",
   "private": true,
   "version": "0.0.1",
-  "scripts": { "build": "tsc" },
+  "scripts": { "build": "tsc", "test": "node -e \"process.exit(0)\"", "test:e2e": "node -e \"process.exit(0)\"" },
   "devDependencies": { "typescript": "^5.5.4" }
 }
 "#;
@@ -75,7 +82,7 @@ const FIXTURE_PACKAGE_JSON_WITH_VULNERABLE_DEP: &str = r#"{
   "name": "fixture",
   "private": true,
   "version": "0.0.0",
-  "scripts": { "build": "tsc" },
+  "scripts": { "build": "tsc", "test": "node -e \"process.exit(0)\"", "test:e2e": "node -e \"process.exit(0)\"" },
   "devDependencies": { "typescript": "^5.5.4" },
   "dependencies": { "minimatch": "3.0.0" }
 }
@@ -89,28 +96,30 @@ const FIXTURE_PACKAGE_JSON_WITH_VULNERABLE_DEP_DESCRIBED: &str = r#"{
   "description": "same vulnerable dependency, unrelated edit",
   "private": true,
   "version": "0.0.0",
-  "scripts": { "build": "tsc" },
+  "scripts": { "build": "tsc", "test": "node -e \"process.exit(0)\"", "test:e2e": "node -e \"process.exit(0)\"" },
   "devDependencies": { "typescript": "^5.5.4" },
   "dependencies": { "minimatch": "3.0.0" }
 }
 "#;
 
-// A `test` script that always succeeds — a plain `node -e`, not a real test
-// runner, so the test-stage tests below stay fast and need no extra
-// dependency beyond what the fixture already resolves. What matters to the
-// gate is only that the outcome DECLARES a `test` script and that script's
-// exit code, not what it actually does.
+// `test` and `test:e2e` scripts that both always succeed — plain `node -e`
+// calls, not a real test runner, so the test-stage tests below stay fast and
+// need no extra dependency beyond what the fixture already resolves. What
+// matters to the gate is only that the outcome DECLARES both scripts and
+// their exit codes, not what they actually do. `test:e2e` joined this
+// fixture under ADR 0013 — without it, this changeset would now fail the new
+// mandatory e2e-presence check before ever reaching whatever the `test`
+// stage itself is meant to prove.
 const FIXTURE_PACKAGE_JSON_WITH_PASSING_TEST: &str = r#"{
   "name": "fixture",
   "private": true,
   "version": "0.0.0",
-  "scripts": { "build": "tsc", "test": "node -e \"process.exit(0)\"" },
+  "scripts": { "build": "tsc", "test": "node -e \"process.exit(0)\"", "test:e2e": "node -e \"process.exit(0)\"" },
   "devDependencies": { "typescript": "^5.5.4" }
 }
 "#;
 
-// Same shape, but the `test` script fails — the build-green/test-red case the
-// test stage exists to catch (THREAT_MODEL.md R7).
+// `test` script exits 1 — the build-green/test-red case the test stage exists to catch.
 const FIXTURE_PACKAGE_JSON_WITH_FAILING_TEST: &str = r#"{
   "name": "fixture",
   "private": true,
@@ -119,6 +128,256 @@ const FIXTURE_PACKAGE_JSON_WITH_FAILING_TEST: &str = r#"{
   "devDependencies": { "typescript": "^5.5.4" }
 }
 "#;
+
+// ---- mandatory-script-presence fixtures (ADR 0013) ----
+//
+// `test`/`test:e2e` are mandatory, not opt-in, as of ADR 0013: absence now
+// fails the changeset (once one is open) instead of being silently skipped.
+// These fixtures each omit exactly one of the two, so a test can prove the
+// absence itself is what's being judged, independent of whether either
+// script would have passed.
+
+// Has `test:e2e` but no `test` — proves the amended (now-mandatory) behaviour
+// of the pre-existing test stage.
+const FIXTURE_PACKAGE_JSON_NO_TEST_SCRIPT: &str = r#"{
+  "name": "fixture",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": { "build": "tsc", "test:e2e": "node -e \"process.exit(0)\"" },
+  "devDependencies": { "typescript": "^5.5.4" }
+}
+"#;
+
+// Has `test` but no `test:e2e` — proves the same policy on the new stage.
+const FIXTURE_PACKAGE_JSON_NO_E2E_SCRIPT: &str = r#"{
+  "name": "fixture",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": { "build": "tsc", "test": "node -e \"process.exit(0)\"" },
+  "devDependencies": { "typescript": "^5.5.4" }
+}
+"#;
+
+// Neither `test` nor `test:e2e` — the exact pre-ADR-0013 fixture shape,
+// kept as its own named constant (rather than reusing `FIXTURE_PACKAGE_JSON`,
+// which now always carries both) to stand for a "legacy, green-but-test-less
+// predecessor": a repo `establish_clone`'s UNCHANGED precondition (build-green
+// only) must still be able to adopt, so the mandatory bar can then be proven
+// to bite at the advisor's first real changeset against it instead
+// (`changeset_is_open` — see the corrected mechanism note in ADR 0013).
+const FIXTURE_PACKAGE_JSON_NO_TEST_OR_E2E: &str = r#"{
+  "name": "fixture",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": { "build": "tsc" },
+  "devDependencies": { "typescript": "^5.5.4" }
+}
+"#;
+
+// ---- scripts-freeze fixtures (ADR 0013, T16) ----
+//
+// Under Maintenance the scripts object must be byte-identical to HEAD's — the
+// whole object, not just the gate keys, so an added `pretest`/`posttest` hook
+// (npm runs those automatically) can't sneak past either. The fixture below
+// adds a `pretest` hook to the baseline scripts object, leaving all mandatory
+// scripts present; used to prove the scripts-freeze gate fires before any npm
+// invocation, and that Genesis is unrestricted.
+
+// Like FIXTURE_PACKAGE_JSON but with a `pretest` hook injected into `scripts`.
+// All mandatory scripts are still present (so the mandatory-presence gate does
+// not fire); only the scripts object differs from the baseline — the exact shape
+// of the "replace a gate script with a hook" bypass T16 closes.
+const FIXTURE_PACKAGE_JSON_SCRIPTS_WITH_HOOK: &str = r#"{
+  "name": "fixture",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": { "build": "tsc", "test": "node -e \"process.exit(0)\"", "test:e2e": "node -e \"process.exit(0)\"", "pretest": "echo injected" },
+  "devDependencies": { "typescript": "^5.5.4" }
+}
+"#;
+
+// ---- e2e-stage fixtures (ADR 0013): a real, minimal Vite+React+Playwright
+// project ----
+//
+// Unlike the `test` stage's fixtures above, exercising `has_e2e_script`'s
+// stage for real needs a real bundler (`vite build`) and a real headless
+// browser driving the actually-built `dist/` — a `node -e` stand-in would
+// prove nothing about the class of bug this stage exists to catch (a
+// component that throws only once React actually renders it). Kept as its
+// own separate genesis project rather than layered onto the plain `tsc`
+// fixture above: it needs `index.html`/`vite.config.ts`/`playwright.config.ts`/
+// `tests/e2e/`, none of which the bare-`tsc` fixture has any use for.
+//
+// `PORT_COUNTER` gives each fixture instance its own preview-server port, so
+// two of these can run concurrently within the same `cargo test` invocation
+// (which runs tests in parallel by default) without colliding on a bound
+// port — the one piece of shared, host-global state a real webServer needs
+// that a temp-dir workspace does not already isolate for free.
+static PORT_COUNTER: AtomicU64 = AtomicU64::new(4300);
+
+fn next_port() -> u16 {
+    PORT_COUNTER.fetch_add(1, Ordering::SeqCst) as u16
+}
+
+const FIXTURE_E2E_TSCONFIG: &str = r#"{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true
+  },
+  "include": ["src"]
+}
+"#;
+
+const FIXTURE_E2E_VITE_CONFIG: &str = r#"import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+});
+"#;
+
+const FIXTURE_E2E_INDEX_HTML: &str = r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>fixture</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+"#;
+
+const FIXTURE_E2E_MAIN_TSX: &str = r#"import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App";
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+"#;
+
+// The conformant component: renders without throwing.
+const FIXTURE_E2E_APP_GREEN_TSX: &str = r#"export default function App() {
+  return <div>hello fixture</div>;
+}
+"#;
+
+// Typechecks fine and `vite build` succeeds — nothing here is a compile-time
+// error, so neither `tsc`-shaped checking nor the bundler can see it coming —
+// but throws unconditionally the moment React actually renders it. Exactly
+// the "compiles but breaks at runtime" class of fault THREAT_MODEL.md's
+// R7/T15 name, and the reason this stage drives a real browser instead of
+// trusting the build alone.
+const FIXTURE_E2E_APP_THROWS_TSX: &str = r#"export default function App() {
+  throw new Error("render crash fixture");
+}
+"#;
+
+// A minimal smoke spec: load the page, and fail if either the mount left
+// `#root` empty (React never got to render anything) or the page raised an
+// uncaught error (React's own path for an unhandled render throw with no
+// error boundary in place). Deliberately not a framework-provided assertion
+// helper beyond what `@playwright/test` ships — this is the shape ADR 0013
+// suggests as a reasonable genesis default, not something the envelope
+// mandates the content of.
+const FIXTURE_E2E_SMOKE_SPEC: &str = r##"import { test, expect } from "@playwright/test";
+
+test("home page renders without throwing", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(err.message));
+
+  await page.goto("/");
+  await expect(page.locator("#root")).not.toBeEmpty();
+  expect(errors).toEqual([]);
+});
+"##;
+
+fn fixture_e2e_package_json(port: u16) -> String {
+    format!(
+        r#"{{
+  "name": "e2e-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {{
+    "build": "vite build",
+    "preview": "vite preview --port {port} --strictPort",
+    "test": "node -e \"process.exit(0)\"",
+    "test:e2e": "playwright install chromium && playwright test"
+  }},
+  "devDependencies": {{
+    "vite": "^5.4.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "typescript": "^5.5.4",
+    "@playwright/test": "^1.62.0"
+  }}
+}}
+"#
+    )
+}
+
+fn fixture_e2e_playwright_config(port: u16) -> String {
+    format!(
+        r#"import {{ defineConfig }} from "@playwright/test";
+
+export default defineConfig({{
+  testDir: "tests/e2e",
+  webServer: {{
+    command: "npm run preview",
+    port: {port},
+    reuseExistingServer: false,
+    timeout: 30_000,
+  }},
+  use: {{
+    baseURL: "http://localhost:{port}",
+  }},
+}});
+"#
+    )
+}
+
+/// Stage a full Vite+React+Playwright genesis project's files (not yet
+/// committed) into `ws` — `package.json`, `tsconfig.json`, `vite.config.ts`,
+/// `index.html`, `src/main.tsx`, the caller-chosen `src/App.tsx` (green or
+/// throws-on-render), `playwright.config.ts`, and the e2e smoke spec — each
+/// its own `stage` call under Genesis clearance (the default), mirroring how
+/// `stage_green_fixture` builds up the plain `tsc` fixture above. Each call
+/// gets its own preview-server port (`next_port`), so this can be called from
+/// more than one test in the same run without two fixtures' preview servers
+/// colliding.
+fn stage_playwright_fixture(ws: &Workspace, app_tsx: &str) {
+    let port = next_port();
+    for (path, content) in [
+        ("package.json", fixture_e2e_package_json(port)),
+        ("tsconfig.json", FIXTURE_E2E_TSCONFIG.to_string()),
+        ("vite.config.ts", FIXTURE_E2E_VITE_CONFIG.to_string()),
+        ("index.html", FIXTURE_E2E_INDEX_HTML.to_string()),
+        ("src/main.tsx", FIXTURE_E2E_MAIN_TSX.to_string()),
+        ("src/App.tsx", app_tsx.to_string()),
+        ("playwright.config.ts", fixture_e2e_playwright_config(port)),
+        (
+            "tests/e2e/smoke.spec.ts",
+            FIXTURE_E2E_SMOKE_SPEC.to_string(),
+        ),
+    ] {
+        let out = stage(ws, path, &content);
+        assert!(
+            out.contains("\"outcome\":\"staged\""),
+            "staging {path}: {out}"
+        );
+    }
+}
 
 // ---- design-conformance fixtures (ADR 0012, Phase D) ----
 //
@@ -1046,7 +1305,12 @@ fn test_stage_fails_a_changeset_whose_test_script_fails() {
         &ws,
         "package.json",
         FIXTURE_PACKAGE_JSON_WITH_FAILING_TEST,
-        "maintenance",
+        // Genesis, not Maintenance: this fixture alters `scripts`, so under
+        // Maintenance the scripts-freeze gate (T16) would refuse the changeset
+        // before `npm test` ever ran — the changeset would still fail, but for
+        // the wrong reason, and this test would silently stop covering the test
+        // stage at all. The negative assertion below pins that down.
+        "genesis",
     );
     assert!(out.contains("\"outcome\":\"staged\""), "{out}");
 
@@ -1054,6 +1318,10 @@ fn test_stage_fails_a_changeset_whose_test_script_fails() {
     assert!(
         out.contains("\"outcome\":\"build_failed\""),
         "a failing test script must fail the changeset, exactly like a failing build: {out}"
+    );
+    assert!(
+        !out.contains("`scripts`"),
+        "the failure must come from the test stage, not the scripts-freeze gate: {out}"
     );
 
     let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
@@ -1325,4 +1593,341 @@ fn design_system_is_frozen_under_maintenance_but_writable_under_genesis() {
     );
 
     reset(&ws);
+}
+
+// ---- 12. mandatory script presence: absence now fails, not skips (ADR 0013) ----
+
+/// A `package.json` with no `test` script fails the changeset, naming the
+/// missing script — the amended behaviour of the pre-existing test stage
+/// (ADR 0011 made it additive; ADR 0013 makes it mandatory). Uses Genesis
+/// clearance so the mandatory-presence check is what fires (under Maintenance,
+/// P1's scripts-freeze gate would fire first for the same fixture — that case
+/// is covered by `maintenance_changeset_editing_scripts_is_refused_naming_the_rule`).
+#[test]
+fn missing_test_script_fails_the_changeset_naming_the_missing_script() {
+    let ws = Workspace::new("mandatory-test-missing");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    let out = stage_with_clearance(
+        &ws,
+        "package.json",
+        FIXTURE_PACKAGE_JSON_NO_TEST_SCRIPT,
+        "genesis",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "drop the test script");
+    assert!(
+        out.contains("\"outcome\":\"build_failed\""),
+        "a missing `test` script must now fail the changeset, not silently skip it: {out}"
+    );
+    assert!(
+        out.contains("no `test` script declared"),
+        "the failure should name the missing script: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head_before, head_after,
+        "HEAD must not move when the mandatory-script gate fails"
+    );
+}
+
+/// The parallel case for `test:e2e` (T15, new as of this milestone): its
+/// absence fails the changeset the same way, naming the missing script. Uses
+/// Genesis clearance for the same reason as the `test` parallel above.
+#[test]
+fn missing_e2e_script_fails_the_changeset_naming_the_missing_script() {
+    let ws = Workspace::new("mandatory-e2e-missing");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    let out = stage_with_clearance(
+        &ws,
+        "package.json",
+        FIXTURE_PACKAGE_JSON_NO_E2E_SCRIPT,
+        "genesis",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "drop the test:e2e script");
+    assert!(
+        out.contains("\"outcome\":\"build_failed\""),
+        "a missing `test:e2e` script must fail the changeset: {out}"
+    );
+    assert!(
+        out.contains("no `test:e2e` script declared"),
+        "the failure should name the missing script: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head_before, head_after,
+        "HEAD must not move when the mandatory-script gate fails"
+    );
+}
+
+// ---- 13. scripts-freeze under Maintenance: the agent cannot alter gate scripts (ADR 0013, T16) ----
+
+/// A Maintenance changeset that adds a `pretest` hook to the `scripts` object —
+/// all mandatory scripts still present, only the object itself differs from HEAD —
+/// is refused by the scripts-freeze gate before any npm invocation, naming the
+/// rule. The bypass this closes: `pretest` runs automatically under npm, so a
+/// hook injected alongside a bug would fire during the test run and could silence
+/// it without touching the gate-key scripts directly.
+#[test]
+fn maintenance_changeset_editing_scripts_is_refused_naming_the_rule() {
+    let ws = Workspace::new("scripts-freeze-maintenance");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    let out = stage_with_clearance(
+        &ws,
+        "package.json",
+        FIXTURE_PACKAGE_JSON_SCRIPTS_WITH_HOOK,
+        "maintenance",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "inject a pretest hook under maintenance");
+    assert!(
+        out.contains("\"outcome\":\"build_failed\""),
+        "a scripts-object change under Maintenance must fail the scripts-freeze gate: {out}"
+    );
+    assert!(
+        out.contains("may not alter the `scripts` object"),
+        "the failure should name the scripts-freeze rule: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head_before, head_after,
+        "HEAD must not move when the scripts-freeze gate fires"
+    );
+}
+
+/// The same scripts-object edit under Genesis clearance commits green — Genesis
+/// writes scripts freely; the scripts-freeze gate is Maintenance-only (T16).
+/// Proves the restriction is clearance-scoped, not a blanket lock on scripts.
+#[test]
+fn genesis_changeset_with_altered_scripts_commits_green() {
+    let ws = Workspace::new("scripts-freeze-genesis");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    let out = stage_with_clearance(
+        &ws,
+        "package.json",
+        FIXTURE_PACKAGE_JSON_SCRIPTS_WITH_HOOK,
+        "genesis",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "genesis: alter scripts freely");
+    assert!(
+        out.contains("\"outcome\":\"committed\""),
+        "a scripts-object change under Genesis must not be blocked: {out}"
+    );
+}
+
+/// A Maintenance changeset that changes only the `version` field — scripts and
+/// `devDependencies` byte-identical to the baseline — commits green. This proves
+/// ADR 0009's dependency-intent surface (non-scripts package.json changes) is
+/// unaffected by the scripts-freeze gate: the gate compares the scripts object
+/// only, not the whole manifest.
+#[test]
+fn maintenance_changeset_editing_non_scripts_fields_still_commits() {
+    let ws = Workspace::new("scripts-freeze-non-scripts");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    // FIXTURE_PACKAGE_JSON_BUMPED changes only `version`; scripts are
+    // byte-identical to the baseline that land_green_fixture committed.
+    let out = stage_with_clearance(
+        &ws,
+        "package.json",
+        FIXTURE_PACKAGE_JSON_BUMPED,
+        "maintenance",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(&ws, "bump the version under maintenance");
+    assert!(
+        out.contains("\"outcome\":\"committed\""),
+        "a non-scripts Maintenance edit to package.json must still commit: {out}"
+    );
+}
+
+// ---- 14. the e2e stage: build-and-test-green still is not enough (ADR 0013, T15) ----
+
+/// A changeset whose Playwright `test:e2e` spec passes — a real Vite build, a
+/// real headless-browser page load against the actually-built `dist/` —
+/// commits green, the e2e analogue of
+/// `test_stage_allows_a_changeset_whose_test_script_passes`.
+#[test]
+fn e2e_stage_allows_a_changeset_whose_e2e_spec_passes() {
+    let ws = Workspace::new("e2e-stage-green");
+    let out = establish_empty(&ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+
+    stage_playwright_fixture(&ws, FIXTURE_E2E_APP_GREEN_TSX);
+
+    let out = commit(
+        &ws,
+        "genesis: minimal Vite+React app with a passing e2e smoke spec",
+    );
+    assert!(
+        out.contains("\"outcome\":\"committed\""),
+        "a conformant app should pass the e2e stage and commit: {out}"
+    );
+}
+
+/// A top-level component that throws unconditionally during render typechecks
+/// fine and builds green (`vite build` never executes the component — it only
+/// bundles it), so neither the build nor the (jsdom-free) `tsc` check can see
+/// this coming. The Playwright spec drives a real browser against the real
+/// built `dist/` and observes the throw; the changeset fails closed and
+/// `HEAD` never moves — the e2e analogue of
+/// `test_stage_fails_a_changeset_whose_test_script_fails`, and a direct
+/// demonstration of R7/T15's "general case": no seeded reproducer, no prior
+/// incident, just a change that compiles but breaks the rendered page.
+#[test]
+fn e2e_stage_fails_a_changeset_whose_component_throws_during_render() {
+    let ws = Workspace::new("e2e-stage-red");
+    let out = establish_empty(&ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+
+    let (_, head_before) = git(ws.path(), &["rev-parse", "HEAD"]);
+
+    stage_playwright_fixture(&ws, FIXTURE_E2E_APP_THROWS_TSX);
+
+    let out = commit(
+        &ws,
+        "genesis: a component that throws unconditionally during render",
+    );
+    assert!(
+        out.contains("\"outcome\":\"build_failed\""),
+        "a component that throws during render must fail the e2e stage, even though tsc/vite build are green: {out}"
+    );
+
+    let (_, head_after) = git(ws.path(), &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head_before, head_after,
+        "HEAD must not move when the e2e stage fails"
+    );
+}
+
+// ---- 15. establish_clone's precondition stays permissive; the first real
+// changeset against the adopted workspace does not (ADR 0013, corrected
+// mechanism) ----
+
+/// `Establish::Clone`'s precondition is UNCHANGED by this milestone
+/// (predecessor's own build must be green — nothing about test scripts), so a
+/// legacy, green-but-test-less predecessor still adopts cleanly. The
+/// mandatory `test`/`test:e2e` bar bites instead at the advisor's FIRST real
+/// changeset against the adopted workspace, via `changeset_is_open` — proving
+/// the corrected mechanism from ADR 0013: adoption stays permissive, the
+/// first real changeset does not, so a Clone-based genesis can still add e2e
+/// coverage as its own first act, exactly like an Empty-based one can.
+#[test]
+fn establish_clone_adopts_a_test_less_predecessor_but_refuses_the_first_changeset_against_it() {
+    let predecessor = Workspace::new("clone-predecessor");
+    let out = establish_empty(&predecessor);
+    assert!(
+        out.contains("\"outcome\":\"established\""),
+        "establish predecessor: {out}"
+    );
+
+    // Write a green-but-test-less app DIRECTLY (bypassing the envelope's own
+    // commit gate entirely) — standing in for however such a predecessor
+    // actually came to exist (history predating ADR 0013, or adopted from
+    // outside this system altogether). This is the only way such a baseline
+    // CAN exist: once a repo is under the envelope's own commit gate, a real
+    // changeset can never land without both scripts (see the tests above) —
+    // the same reasoning `land_inherited_baseline_with_vulnerable_dep` above
+    // already uses for the audit gate's pre-existing-baseline case.
+    fs::write(
+        predecessor.path().join("package.json"),
+        FIXTURE_PACKAGE_JSON_NO_TEST_OR_E2E,
+    )
+    .expect("write predecessor package.json");
+    fs::write(predecessor.path().join("tsconfig.json"), FIXTURE_TSCONFIG)
+        .expect("write predecessor tsconfig.json");
+    fs::create_dir_all(predecessor.path().join("src")).expect("create predecessor src/");
+    fs::write(predecessor.path().join("src/index.ts"), FIXTURE_INDEX_TS_GREEN)
+        .expect("write predecessor src/index.ts");
+    let status = Command::new("npm")
+        .args(["install", "--package-lock-only", "--ignore-scripts"])
+        .current_dir(predecessor.path())
+        .status()
+        .expect("run npm install directly");
+    assert!(status.success(), "npm install --package-lock-only failed");
+    let (ok, out) = git(
+        predecessor.path(),
+        &[
+            "add",
+            "--",
+            "package.json",
+            "tsconfig.json",
+            "src/index.ts",
+            "package-lock.json",
+        ],
+    );
+    assert!(ok, "git add for predecessor: {out}");
+    let (ok, out) = git(
+        predecessor.path(),
+        &[
+            "commit",
+            "--quiet",
+            "-m",
+            "legacy predecessor: green, no test scripts",
+        ],
+    );
+    assert!(ok, "git commit for predecessor: {out}");
+
+    // Adopt it. The precondition is build-green only — no opinion about test
+    // scripts at all — so this must succeed even though the predecessor has
+    // neither `test` nor `test:e2e`.
+    let clone_target = Workspace::new("clone-adopted");
+    let out = envelope(
+        &[
+            "establish",
+            "--repo",
+            clone_target.path_str(),
+            "--mode",
+            "clone",
+            "--source",
+            predecessor.path_str(),
+        ],
+        &[],
+    );
+    assert!(
+        out.contains("\"outcome\":\"established\""),
+        "cloning a green-but-test-less predecessor must succeed — the precondition is build-green only: {out}"
+    );
+
+    // The advisor's first real changeset against the adopted workspace is
+    // refused until BOTH mandatory scripts exist and pass.
+    let out = stage_with_clearance(
+        &clone_target,
+        "src/components/extra.ts",
+        FIXTURE_EXTRA_TS_GREEN,
+        "maintenance",
+    );
+    assert!(out.contains("\"outcome\":\"staged\""), "{out}");
+
+    let out = commit(
+        &clone_target,
+        "the advisor's first change against the adopted predecessor",
+    );
+    assert!(
+        out.contains("\"outcome\":\"build_failed\""),
+        "the FIRST real changeset against an adopted test-less predecessor must be refused: {out}"
+    );
+    assert!(
+        out.contains("no `test` script declared"),
+        "the refusal should name the missing test script: {out}"
+    );
 }

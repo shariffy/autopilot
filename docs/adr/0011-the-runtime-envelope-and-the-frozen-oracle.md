@@ -46,7 +46,11 @@ improve things afterwards, never in the critical path.
 compiles but breaks the page fails the changeset — the pre-commit half of the
 same protection, catching before commit what the trip catches after deploy.
 Skipped when the outcome has no test script, so it never blocks an outcome that
-has not adopted tests.
+has not adopted tests. **Superseded by ADR 0013**: the test script became
+mandatory rather than opt-in (its absence now fails a real changeset the same
+way a failing script does), alongside a new, browser-level `test:e2e` sibling
+stage — see that ADR for the policy change and why it does not also foreclose
+`Establish::Clone` adopting a legacy, test-less predecessor.
 
 ### 3. The oracle must be trusted, so the agent may never author it
 

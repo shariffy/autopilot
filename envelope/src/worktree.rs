@@ -119,23 +119,20 @@ impl BuildVerifier {
         !repo.join("node_modules").exists()
     }
 
-    /// True when the outcome's `package.json` declares a `test` script — the
-    /// signal that it has a test setup at all. Absence is not a failure: not
-    /// every outcome has tests yet (a fresh Genesis workspace never does before
-    /// its first changeset), so the test stage is skipped rather than treated as
-    /// a build failure. A targeted scan, not a JSON parser, mirroring
-    /// `parse_advisory_ids` — brace-matches the `scripts` object, then looks for
-    /// an exact `"test"` key inside it, so a script *named* `test:watch` (which
-    /// contains `"test` as a substring but not the exact key `"test"`) does not
-    /// produce a false positive.
-    fn has_test_script(repo: &Path) -> bool {
+    /// True when the outcome's `package.json` declares a script named `key`
+    /// (mandatory for `"test"` and `"test:e2e"`, ADR 0013). A targeted scan,
+    /// not a JSON parser — brace-matches the `scripts` object via `json_object`,
+    /// then looks for the exact key string `"<key>"` inside it so a script named
+    /// `test:watch` (which contains `"test` as a prefix but not the exact key
+    /// `"test"`) does not produce a false positive.
+    fn has_script(repo: &Path, key: &str) -> bool {
         let Ok(manifest) = std::fs::read_to_string(repo.join("package.json")) else {
             return false;
         };
         let Some(scripts) = json_object(&manifest, "scripts") else {
             return false;
         };
-        scripts.contains("\"test\"")
+        scripts.contains(&format!("\"{key}\""))
     }
 
     /// `npm`/`pnpm` need `run` before a script; `yarn build` is direct.
@@ -144,6 +141,18 @@ impl BuildVerifier {
             &["build"]
         } else {
             &["run", "build"]
+        }
+    }
+
+    /// `npm`/`pnpm` need `run` before a script; `yarn test:e2e` is direct —
+    /// same shape as `build_args`. Unlike `test`, `test:e2e` is not a reserved
+    /// alias any package manager exempts from `run`, so it needs the same
+    /// per-manager handling `build` does.
+    fn e2e_args(pm: &str) -> &'static [&'static str] {
+        if pm == "yarn" {
+            &["test:e2e"]
+        } else {
+            &["run", "test:e2e"]
         }
     }
 
@@ -175,9 +184,33 @@ impl BuildVerifier {
     /// on success, extends it: the envelope-computed lockfile becomes an
     /// explicitly envelope-authored member of THIS changeset, so `commit`'s
     /// `git add -- <staged>` includes it and it lands in the same commit as the
-    /// manifest change that produced it.
-    fn run(&self, repo: &Path, staged: &[String]) -> (bool, String) {
+    /// manifest change that produced it. `clearance` is read from the changeset
+    /// marker (never from the agent — see `open_changeset`) and controls the
+    /// scripts-freeze check below.
+    fn run(&self, repo: &Path, staged: &[String], clearance: &str) -> (bool, String) {
         let mut log = String::new();
+
+        // 0. Scripts-freeze (T16, ADR 0013): under Maintenance, the `scripts`
+        // object in `package.json` must be byte-identical to HEAD's. Whole
+        // object, not just the three gate keys — an added `pretest`/`posttest`
+        // hook runs automatically under npm and would otherwise be a bypass.
+        // Genesis writes scripts freely; if HEAD has no `package.json` yet there
+        // is no baseline to compare against. Placed before any npm invocation so
+        // no injected hook can run even if the check fires.
+        if clearance == "maintenance" && staged.iter().any(|p| p == "package.json") {
+            let (ok, head_manifest) = git(repo, &["show", "HEAD:package.json"]);
+            if ok {
+                let cur_manifest = std::fs::read_to_string(repo.join("package.json"))
+                    .unwrap_or_default();
+                if json_object(&head_manifest, "scripts") != json_object(&cur_manifest, "scripts") {
+                    log.push_str(
+                        "\nMaintenance changeset may not alter the `scripts` object in \
+                         `package.json` — scripts must equal HEAD's byte-for-byte (ADR 0013, T16)\n",
+                    );
+                    return (false, log);
+                }
+            }
+        }
 
         // 1. Resolution: the agent's `package.json` is intent, never bytes on
         // the wire — only the trusted core computes the lockfile from it
@@ -237,19 +270,51 @@ impl BuildVerifier {
         // actually works" becomes part of the gate, not just "the code
         // compiles". A build-green change can still crash at runtime (a `!`
         // assertion the type checker cannot see through, a dangling lookup);
-        // the outcome's own test suite is where that shows up. Only runs when
-        // the outcome HAS a `test` script — an outcome with none is not
-        // penalised for a stage it never opted into, so this stays additive
-        // rather than a new precondition every outcome must satisfy. No
+        // the outcome's own test suite is where that shows up. As of ADR 0013
+        // a `test` script is MANDATORY, not opt-in: its absence now fails the
+        // changeset, the same as a failing script would — but only once a
+        // changeset is actually open (`changeset_is_open`, checked below).
+        // `establish_clone`'s precondition call (`run(workspace, &[])`, no
+        // changeset yet) judges a predecessor's raw state, not something the
+        // agent proposed — enforcing the mandatory bar there would foreclose
+        // adopting a legacy, test-less predecessor at all. The bar bites
+        // instead at the advisor's first real changeset against it. No
         // `--ignore-scripts` here: unlike resolve/install (which touch a
         // lockfile before the agent's write has even passed the build gate),
         // `npm test` running the outcome's own lifecycle script IS the point.
-        if Self::has_test_script(repo) {
+        if Self::has_script(repo, "test") {
             let (ok, out) = run_in(repo, pm, &["test"]);
             log.push_str(&out);
             if !ok {
                 return (false, log);
             }
+        } else if changeset_is_open(repo) {
+            log.push_str("\nno `test` script declared\n");
+            return (false, log);
+        }
+
+        // 3.6. E2E: the browser-level sibling of the test stage above, and the
+        // general case ADR 0011 left open (R7) — a change that builds green
+        // and passes unit tests can still throw or fail to render at runtime
+        // with no seeded reproducer to catch it (ADR 0013). The outcome owns
+        // the suite entirely: Playwright (or equivalent) is an ordinary
+        // devDependency, `.spec` files live under the outcome's own
+        // `tests/e2e/`, and a `playwright.config.ts` `webServer` is how the
+        // preview server is booted and torn down for the run — nothing here
+        // is envelope-orchestrated. Same mandatory-not-opt-in policy and the
+        // same `changeset_is_open` gate as the test stage immediately above,
+        // for the same reason: absence must fail a real changeset but must
+        // never block `establish_clone`'s precondition check on a
+        // predecessor's raw state.
+        if Self::has_script(repo, "test:e2e") {
+            let (ok, out) = run_in(repo, pm, Self::e2e_args(pm));
+            log.push_str(&out);
+            if !ok {
+                return (false, log);
+            }
+        } else if changeset_is_open(repo) {
+            log.push_str("\nno `test:e2e` script declared\n");
+            return (false, log);
         }
 
         // 4. Audit: a non-regression gate, not a zero-vulns gate. Pre-existing
@@ -347,14 +412,16 @@ impl BuildVerifier {
     }
 
     fn describe(&self, repo: &Path) -> String {
+        // `describe` is only ever reached from `commit`, after `run` returned
+        // green with a changeset open — both stages (mandatory, ADR 0013) have
+        // always run and always passed by that point (invariant cited in ADR 0013).
         let pm = Self::package_manager(repo);
         let mut desc = format!(
             "npm install --package-lock-only --ignore-scripts && npm ci --ignore-scripts && {pm} {}",
             Self::build_args(pm).join(" ")
         );
-        if Self::has_test_script(repo) {
-            desc.push_str(&format!(" && {pm} test"));
-        }
+        desc.push_str(&format!(" && {pm} test"));
+        desc.push_str(&format!(" && {pm} {}", Self::e2e_args(pm).join(" ")));
         desc.push_str(" && npm audit --json");
         if let Some(summary) = self.last_audit.borrow().as_ref() {
             desc.push_str(&format!(" — {summary}"));
@@ -432,12 +499,14 @@ fn json_object<'a>(json: &'a str, key: &str) -> Option<&'a str> {
 
 /// Open a changeset: require a clean work tree so the baseline (`HEAD`) is
 /// well-defined and a later revert is exact, then record the open changeset so
-/// `stage` and `commit` can refuse to act outside one. Fails closed.
+/// `stage` and `commit` can refuse to act outside one. Fails closed. Defaults
+/// to Maintenance clearance (deny-by-default) — the agent proposes clearance
+/// via `stage`'s `--clearance` flag, which persists it at first auto-open.
 pub fn begin(repo: &Path) -> Disposition {
     if let Err(reason) = ensure_clean(repo) {
         return Disposition::Refused { reason };
     }
-    match open_changeset(repo) {
+    match open_changeset(repo, "maintenance") {
         Ok(()) => Disposition::Begun,
         Err(reason) => Disposition::Refused { reason },
     }
@@ -455,12 +524,15 @@ pub fn begin(repo: &Path) -> Disposition {
 /// refused. `begin` stays available to open a changeset explicitly. What is never
 /// optional is the assertion itself: no changeset exists without a clean baseline
 /// behind it, so a revert is always well-defined.
-pub fn stage(repo: &Path, rel_path: &str, content: &[u8]) -> Disposition {
+///
+/// `clearance` is persisted as line 1 of the changeset marker on auto-open;
+/// once a changeset is open its clearance is frozen there (T16, ADR 0013).
+pub fn stage(repo: &Path, rel_path: &str, content: &[u8], clearance: &str) -> Disposition {
     if !changeset_is_open(repo) {
         if let Err(reason) = ensure_clean(repo) {
             return Disposition::Refused { reason };
         }
-        if let Err(reason) = open_changeset(repo) {
+        if let Err(reason) = open_changeset(repo, clearance) {
             return Disposition::Refused { reason };
         }
     }
@@ -485,6 +557,9 @@ pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Dispositio
             reason: "no staged changes to commit".to_string(),
         };
     }
+    // Read the clearance frozen at open time — never from the agent-supplied
+    // commit invocation (T16, ADR 0013).
+    let clearance = changeset_clearance(repo);
     let staged = match staged_paths(repo) {
         Ok(paths) => paths,
         Err(reason) => return Disposition::Refused { reason },
@@ -499,7 +574,7 @@ pub fn commit(repo: &Path, intent: &str, verifier: &BuildVerifier) -> Dispositio
     // (inside `run`) may itself extend the changeset's membership with an
     // envelope-computed lockfile (ADR 0009), so `staged` is re-read below
     // rather than reused from above.
-    let (passed, output) = verifier.run(repo, &staged);
+    let (passed, output) = verifier.run(repo, &staged, &clearance);
     if !passed {
         // Leave the staged tree as-is: nothing is committed, so `HEAD` is still
         // the clean baseline, and the agent can fix the offending file and retry
@@ -577,7 +652,10 @@ pub fn refresh_dependencies(repo: &Path, audit_fix: bool) -> Disposition {
         if let Err(reason) = ensure_clean(repo) {
             return Disposition::Refused { reason };
         }
-        if let Err(reason) = open_changeset(repo) {
+        // Deny-by-default: refresh_dependencies is a trusted-core operation
+        // (ADR 0009) but carries no explicit genesis intent, so Maintenance is
+        // the correct clearance — the scripts-freeze check (T16) still applies.
+        if let Err(reason) = open_changeset(repo, "maintenance") {
             return Disposition::Refused { reason };
         }
     }
@@ -616,7 +694,10 @@ pub fn adjudicate_write(
     if let Disposition::Refused { reason } = begin(repo) {
         return Disposition::Refused { reason };
     }
-    if let Disposition::Refused { reason } = stage(repo, rel_path, content) {
+    // `begin` opened the changeset with Maintenance clearance; `stage` sees it
+    // open and will not re-open, so the clearance argument here is not used for
+    // auto-open — but the signature requires one (deny-by-default, "maintenance").
+    if let Disposition::Refused { reason } = stage(repo, rel_path, content, "maintenance") {
         return Disposition::Refused { reason };
     }
     // A one-shot edit owns its whole changeset, so a red build resets to a clean
@@ -735,7 +816,8 @@ fn establish_clone(workspace: &Path, source: &Path, verifier: &BuildVerifier) ->
     // future change has no sound baseline to return to. Verify before adopting.
     // No changeset is open here (adoption precedes one), so this is an empty
     // staged set — resolution still runs if the predecessor has no lockfile.
-    let (passed, output) = verifier.run(workspace, &[]);
+    // "genesis" clearance: no scripts-freeze check on a predecessor's raw state.
+    let (passed, output) = verifier.run(workspace, &[], "genesis");
     if !passed {
         let _ = std::fs::remove_dir_all(workspace);
         return Disposition::Refused {
@@ -797,10 +879,24 @@ fn changeset_is_open(repo: &Path) -> bool {
     changeset_marker(repo).exists()
 }
 
-/// Record an open changeset with, as yet, no members.
-fn open_changeset(repo: &Path) -> Result<(), String> {
-    std::fs::write(changeset_marker(repo), b"")
+/// Record an open changeset with, as yet, no members. The clearance is frozen
+/// here as line 1 of the marker — the agent cannot reach `.git/` to alter it
+/// (invariant cited in ADR 0013, T16). Paths are appended on subsequent lines
+/// by `record_staged`; `staged_paths` skips line 1; `commit` reads it back so
+/// `BuildVerifier::run` enforces the scripts-freeze rule without trusting the
+/// agent-supplied commit invocation.
+fn open_changeset(repo: &Path, clearance: &str) -> Result<(), String> {
+    std::fs::write(changeset_marker(repo), format!("{clearance}\n"))
         .map_err(|e| format!("could not open the changeset: {e}"))
+}
+
+/// The clearance frozen at changeset-open time: line 1 of the marker. Defaults
+/// to "maintenance" (deny-by-default) when the marker is absent or malformed.
+fn changeset_clearance(repo: &Path) -> String {
+    std::fs::read_to_string(changeset_marker(repo))
+        .ok()
+        .and_then(|s| s.lines().next().map(str::to_string))
+        .unwrap_or_else(|| "maintenance".to_string())
 }
 
 fn close_changeset(repo: &Path) {
@@ -808,22 +904,32 @@ fn close_changeset(repo: &Path) {
 }
 
 /// Add a path to the open changeset's membership. Re-staging the same path (a
-/// fix-and-retry after a red build) must not duplicate it.
+/// fix-and-retry after a red build) must not duplicate it. Line 1 (the
+/// clearance) is preserved unchanged — only the path list on subsequent lines
+/// is updated.
 fn record_staged(repo: &Path, rel_path: &str) -> Result<(), String> {
+    let clearance = changeset_clearance(repo);
     let mut paths = staged_paths(repo)?;
     if !paths.iter().any(|p| p == rel_path) {
         paths.push(rel_path.to_string());
     }
-    std::fs::write(changeset_marker(repo), paths.join("\n"))
+    let mut content = format!("{clearance}\n");
+    if !paths.is_empty() {
+        content.push_str(&paths.join("\n"));
+    }
+    std::fs::write(changeset_marker(repo), content)
         .map_err(|e| format!("could not record `{rel_path}` in the changeset: {e}"))
 }
 
-/// The paths staged into the open changeset, in staging order.
+/// The paths staged into the open changeset, in staging order. Skips line 1
+/// (the clearance frozen by `open_changeset`) so it never leaks into the
+/// `git add -- <paths>` list at commit.
 fn staged_paths(repo: &Path) -> Result<Vec<String>, String> {
     let raw = std::fs::read_to_string(changeset_marker(repo))
         .map_err(|e| format!("could not read the open changeset: {e}"))?;
     Ok(raw
         .lines()
+        .skip(1) // line 0 is the clearance; paths start at line 1
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .map(str::to_string)

@@ -293,7 +293,10 @@ fn cmd_stage(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    emit_disposition(&path, &worktree::stage(&repo, &path, &content));
+    // Pass the clearance string directly — the policy kernel already validated
+    // it above, so "genesis"/"maintenance" are the only values that reach here.
+    let clearance_str = flags.clearance.as_deref().unwrap_or("maintenance");
+    emit_disposition(&path, &worktree::stage(&repo, &path, &content, clearance_str));
     ExitCode::SUCCESS
 }
 

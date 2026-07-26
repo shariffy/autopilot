@@ -4,6 +4,9 @@
 //! agentic UI verification — not to anything the agent claims about its own work.
 //! The agent cannot self-certify: `Verification` is produced by the verifier and
 //! never appears in the agent's proposal.
+//!
+//! `ui_verified` here is the in-memory model of UI verification; the real gate
+//! for the git-backed path is `worktree::BuildVerifier`'s e2e stage (ADR 0013).
 
 use crate::types::{Verification, Violation};
 

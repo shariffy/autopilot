@@ -2,8 +2,9 @@
 
 This is the ordered backlog for Autopilot. It exists because the direction is real
 but scattered: the honest edge of the system lives in the [threat model](THREAT_MODEL.md)
-as residuals **R1–R8, R10** (R9 discharged as T10), and the architectural follow-ons
-live in the [ADRs](adr).
+as residuals **R1–R8, R10, R11, R13** (R9 discharged as T10; R7 narrowed by ADR
+0013 — its crash class is T14/T15 — but **not** discharged), and the
+architectural follow-ons live in the [ADRs](adr).
 This document does not invent new work — it *sequences* what those two already
 name, so an auditor can see not just what is unfinished but in what order it
 should be finished and why.
@@ -76,7 +77,7 @@ generalise the substrate (M5) and harden for a non-local deployment (M6).
 |---|---|---|---|
 | M1 | ✅ First light — one real genesis changeset | — (unblocks all) | nothing |
 | M2 | ✅ Dependency maintenance as a first-class changeset | — (closes a capability gap) | M1 |
-| M3 | Agentic UI verification | **R7** | M1 |
+| M3 | ◐ Deterministic e2e verification — crash class only; R7 **not** discharged | R7 (partial) | M1 |
 | M4 | ✅ The real path under test | **R9** | M1 |
 | M5 | Abstract the effector off git | ADR 0003 follow-on | M4 |
 | M6 | Harden the build sandbox and authenticate the seam | **R8**, **R3** | M1 |
@@ -128,7 +129,7 @@ proposes intent, the trusted core computes the artifact that intent is judged by
 
 **Why here.** This did not depend on M1 succeeding in any technical sense, but it
 needed a working changeset lifecycle to land into — M1 proved that lifecycle
-worked. It needed nothing from the sensor work below (M3, agentic UI verification)
+worked. It needed nothing from the sensor work below (M3, e2e verification)
 and had no reason to wait on it.
 
 **What landed.** `package.json` joins the Maintenance write surface by exact-match
@@ -328,29 +329,122 @@ observation asking for a "Clear filters" button, landed it composed entirely
 from the existing design system — no raw HTML, no inline styles, green through
 the design stage on the first attempt — advisor-authored, envelope-committed.
 
-## M3 — Agentic UI verification (discharges R7)
+## M3 — Deterministic e2e verification (partial; R7 stays open)
 
-**Why.** Verification today is the outcome's own build, plus — since Phase C — a
-test stage and a frozen-reproducer pattern for the *specific* failing case a
-sensor already captured (ADR 0011). What is still missing is the *general*
-case: nothing drives the rendered page for a change with no seeded reproducer
-and confirms it actually works, only that it compiles and passes whatever
-tests already exist. [R7](THREAT_MODEL.md) names this the load-bearing piece
-that remains.
+**Status: partial. R7 is narrowed, not discharged.** This was first written up
+as done, under the name "agentic UI verification," and both parts of that were
+wrong. Recording why, because catching it is the process working.
 
-**What lands.** A UI verification step inside the monitor, layered *after* the build,
-that drives the rendered page and confirms the change actually works before
-commit-on-green. It runs as a trusted verifier — inside the envelope, from a source
-the agent cannot influence or forge (assumption **A5**), exactly as the build does
-now (`worktree::BuildVerifier`).
+The name came from `verifier.rs`'s stub — *"a browser-driving agent that checks
+the rendered UI."* What landed contains no model at all: the gate runs the
+outcome's own `test:e2e` and reads an exit code. The only agent involvement is
+that the advisor authors the specs at Genesis, which is a weakness rather than
+the feature.
 
-**Where it lives.** `envelope/src/worktree.rs` (a verifier alongside `BuildVerifier`)
-and `envelope/src/invariants/change_shape.rs` (the shape gate already expects
-typecheck + tests + UI; this makes the UI half real).
+The completion claim was the more serious error. Go back to what R7 actually
+said: *"What remains open is the general case — **agentic UI verification** of
+arbitrary rendered behaviour a seeded reproducer does not cover... **Most
+residual frontend risk is visual/UX regressions that compile and pass existing
+tests but still look or behave wrong.**"* A gate whose only question is "did it
+throw" closes the crash class and leaves that majority untouched — and the
+agentic verification R7 named by name is unbuilt. Marking ✅ here would have
+discharged a residual on the strength of closing its smaller half, which is
+exactly what this document's own preamble says is not a discharge.
 
-**Exit criterion.** R7 moves to Threats: a change that builds but breaks the rendered
-page is rejected by the verifier, demonstrated by a test in which a compiling-but-broken
-change fails closed and reverts.
+So: the crash class is genuinely closed, with a test that fails if the property
+is removed (below). R7 returns to Residuals, narrowed to what is left. M3 is
+reopened as the remaining work, and the agentic judge stays tracked in "Not on
+this roadmap" as the shared mitigation it needs alongside R13.
+
+**What landed.** Verification before this milestone was the outcome's own build,
+plus — since Phase C — a test stage and a frozen-reproducer pattern for the
+*specific* failing case a sensor already captured (ADR 0011). What was still
+missing was the *general* case: nothing drove the rendered page for a change
+with no seeded reproducer and confirmed it actually worked, only that it
+compiled and passed whatever tests already existed. [R7](THREAT_MODEL.md)
+named this the load-bearing piece that remained.
+
+**Why here.** R7 is the load-bearing residual for a frontend, and this closes
+its remaining half — the general case, not just the one incident Phase C's
+frozen reproducer already covers. Independent of M4/M5/M6: it needed nothing
+from the real-path test suite or the effector abstraction to land, and it
+landed before both.
+
+**What landed (M3 follow-up).** One operator commit to the demo outcome
+(`autopilot-demo-v2-final/workspace`) as trusted setup, stamped `ENVELOPE_IDENT`:
+`@playwright/test`, `playwright.config.ts`, `tests/e2e/smoke.spec.ts`, and the
+`test:e2e` script — infrastructure the Maintenance reach rules and the
+scripts-freeze gate (T16, ADR 0013) would make it impossible for an advisor to
+add after the fact. This project counts operator commits rather than hiding them.
+
+**What landed (M3 core).** A new e2e verifier stage in `worktree::BuildVerifier::run`,
+sequenced immediately after the existing test stage and before the audit
+gate — its own block, own gate, own line in `describe()`, the same shape
+`design.rs` and the test stage already established for keeping distinct
+failure classes distinct in the build log. It runs the outcome's own
+`test:e2e` script (`pm run test:e2e`, or `pm test:e2e` for yarn) when
+`package.json` declares one, capturing output and failing the changeset on a
+nonzero exit — the same shape as the existing test stage's own
+`run_in(repo, pm, &["test"])` block. As designed, this needed **no new
+envelope-side toolchain and no `invariants::reach.rs` change**: Playwright is
+an ordinary outcome devDependency the existing `npm ci` already installs and
+the existing audit gate already covers, the `.spec` files live under the
+outcome's own `tests/e2e/`, and that zone is Genesis-writable/
+Maintenance-frozen for free — `ALLOWED_WRITE_PREFIXES` already has no
+`tests/` prefix, the identical footing `tests/unit/` already stood on.
+
+The bigger decision landed alongside the new stage: **`test` and `test:e2e`
+became mandatory, not opt-in**, for every changeset this system produces,
+genesis included — a policy change to the *existing* test stage (ADR 0011),
+not just a property of the new one, recorded together in
+[ADR 0013](adr/0013-deterministic-e2e-verification.md). The bar bites via
+`changeset_is_open(repo)`: `commit` always has one open by the time it calls
+the verifier, so a real changeset without both scripts is refused, naming
+the missing one; `establish_clone`'s precondition call runs with no
+changeset open at all (it judges a predecessor's raw state, not something
+the agent proposed), so it stays exactly as it was — build-green only — and
+a legacy, test-less predecessor can still be adopted. The advisor's first
+real changeset against that adopted workspace is then where the bar actually
+bites, proven directly:
+`establish_clone_adopts_a_test_less_predecessor_but_refuses_the_first_changeset_against_it`
+adopts a predecessor whose `package.json` declares only `build`, confirms
+adoption succeeds, then confirms the very next changeset against it is
+refused for the missing `test` script. `missing_test_script_fails_the_changeset_naming_the_missing_script`
+and its `test:e2e` parallel prove the same amended, mandatory-presence
+behaviour directly. And a real Vite+React+Playwright fixture —
+`e2e_stage_allows_a_changeset_whose_e2e_spec_passes` and
+`e2e_stage_fails_a_changeset_whose_component_throws_during_render` — proves
+the stage itself: a top-level component that typechecks fine and builds
+green but throws unconditionally the moment React renders it is caught by a
+real headless-browser run against the actually-built `dist/`, `HEAD` unmoved
+on the failure, exactly the "compiles but breaks the page" class R7 named.
+
+**Where it lives.** `envelope/src/worktree.rs` (`has_e2e_script`, `e2e_args`,
+the e2e stage, and `has_test_script`'s flipped skip-to-fail behaviour),
+[ADR 0013](adr/0013-deterministic-e2e-verification.md).
+
+**Exit criterion — partially met; M3 stays open.** The crash class has a
+mitigation and a test that fails when it is removed, which is this document's
+bar: **T15** (plus an amended **T14** for the mandatory-presence policy) in the
+[threat model](THREAT_MODEL.md), demonstrated by
+`e2e_stage_fails_a_changeset_whose_component_throws_during_render`, with the
+mandatory-presence policy shown separately by
+`missing_test_script_fails_the_changeset_naming_the_missing_script` and
+`missing_e2e_script_fails_the_changeset_naming_the_missing_script`.
+
+**R7 remains in Residuals** for the rest: a change that renders successfully
+but wrongly — R7's own "most residual frontend risk" — plus a non-throwing
+wrong-answer fault needing a human oracle, the fact that presence of
+`test`/`test:e2e` is a floor rather than a quality bar (either can pass
+vacuously, and the specs are agent-authored at Genesis), and the agentic UI
+verification R7 named by name, still unbuilt.
+
+**What would finish M3.** A verifier that can judge rendered *behaviour and
+appearance*, not just absence of a throw. That is the agentic judge — and it
+shares its whole mitigation problem (a trusted rubric, untrusted-input framing,
+bounded verdicts, an advisory-only period) with R13's code review, which is why
+both are held in "Not on this roadmap" below until that pattern is designed
+once rather than twice, badly.
 
 ## M4 — The real path under test (discharges R9) (done)
 
@@ -443,3 +537,16 @@ nothing above depends on them and each is a current-scope choice, not an oversig
   that a published tarball is what its maintainer actually published (npm's
   provenance/attestation tooling) is a further hardening step, not a precondition for
   the non-regression property to hold.
+- **R7's remainder (a page that renders the wrong thing) and R13 (no qualitative/security code
+  review)** — the deferred **agent-graded verification** milestone: a UI-QA
+  judge that can say a page is wrong even when it doesn't throw, and a code
+  reviewer that can catch a poorly-written or agent-introduced-vulnerable
+  change every deterministic gate (build, design, test, e2e, audit) still lets
+  through. Both are the same underlying pattern — an agent's work graded by
+  another agent, not a deterministic check — and both are newly exposed to
+  indirect prompt injection the moment such a judge reads agent-authored
+  content (the rendered page, code comments). Deliberately not a numbered
+  milestone yet: this is a genuinely new, *behavioural* trust component this
+  system has not built before, and it deserves one deliberately-designed
+  shared mitigation story rather than being rushed in piecemeal alongside M3's
+  deterministic e2e stage. See [ADR 0013](adr/0013-deterministic-e2e-verification.md).

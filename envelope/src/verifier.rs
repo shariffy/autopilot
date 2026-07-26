@@ -15,10 +15,10 @@ pub trait Verifier {
     fn verify(&self, service: &str) -> Verification;
 }
 
-/// A stand-in for a real verification pipeline (CI + a browser-driving agent
-/// that checks the rendered UI). Seeded out-of-band; the agent has no handle to
-/// it. An unseeded service verifies as `Verification::default()` — all false —
-/// so the gate fails closed.
+/// A stand-in for the in-memory verification pipeline (CI + agentic UI
+/// verification — the real gate is `worktree::BuildVerifier`'s e2e stage, ADR
+/// 0013). Seeded out-of-band; the agent has no handle to it. An unseeded service
+/// verifies as `Verification::default()` — all false — so the gate fails closed.
 #[derive(Default)]
 pub struct StubVerifier {
     results: HashMap<String, Verification>,
