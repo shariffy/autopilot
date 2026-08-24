@@ -70,8 +70,12 @@ maintenance (M2) closes a real capability gap the agent had no way around — it
 needed nothing from the sensor work below to land, so it landed next. Then make the
 gate the code passes through actually mean "the page works," not "the code
 compiles" (M3) — the load-bearing residual for a frontend. Then put the real path
-that M1 exercised under automated test so it cannot silently rot (M4). Only then
-generalise the substrate (M5) and harden for a non-local deployment (M6).
+that M1 exercised under automated test so it cannot silently rot (M4). Then
+sandbox the environment those gates actually run in (M5) — promoted ahead of the
+effector work by [ADR 0014](adr/0014-the-verifier-execution-environment.md),
+because every gate above executes *after* the verifier has already run the
+agent's code on the host, so each one is conditional on it. Only then generalise
+the substrate (M6) and authenticate the seam for a non-local deployment (M7).
 
 | # | Milestone | Discharges | Depends on |
 |---|---|---|---|
@@ -79,8 +83,9 @@ generalise the substrate (M5) and harden for a non-local deployment (M6).
 | M2 | ✅ Dependency maintenance as a first-class changeset | — (closes a capability gap) | M1 |
 | M3 | ◐ Deterministic e2e verification — crash class only; R7 **not** discharged | R7 (partial) | M1 |
 | M4 | ✅ The real path under test | **R9** | M1 |
-| M5 | Abstract the effector off git | ADR 0003 follow-on | M4 |
-| M6 | Harden the build sandbox and authenticate the seam | **R8**, **R3** | M1 |
+| M5 | Sandbox the verifier's execution environment | **R8** | M1 |
+| M6 | Abstract the effector off git | ADR 0003 follow-on | M4 |
+| M7 | Authenticate the seam | **R3** | M1 |
 
 ---
 
@@ -178,7 +183,7 @@ Maintenance clearance, but only for `package.json` — it says nothing about
 whether the clearance's allowlist actually fits a real app's *feature* surface,
 or whether the brief that goes with it reads as "maintain," not "build." Both
 needed settling before a real sensor-driven run is worth spending money on, and
-neither depended on M3–M6.
+neither depended on M3–M7.
 
 **What landed.**
 
@@ -230,7 +235,7 @@ in the thesis, not just a residual.
 for a frontend, and this closes the load-bearing half of it — a change that
 compiles but breaks the page — with the piece nothing else touches: recovery
 *after* a bad change is already live, not just refusal before one lands.
-Independent of M3's general case and of M5/M6.
+Independent of M3's general case and of M6/M7.
 
 **What landed.**
 
@@ -278,7 +283,7 @@ time. That is precisely the failure mode this milestone closes; the current
 published history no longer contains that specific example, because this
 invariant has applied to every maintenance changeset from Phase B onward.
 
-**Why here.** Independent of M3–M6 below — none of them touch UI composition —
+**Why here.** Independent of M3–M7 below — none of them touch UI composition —
 and it closes a gap already demonstrated to be real, not theoretical. Waiting
 would mean shipping more maintenance changesets through a boundary already
 known to tolerate the failure mode.
@@ -366,7 +371,7 @@ named this the load-bearing piece that remained.
 
 **Why here.** R7 is the load-bearing residual for a frontend, and this closes
 its remaining half — the general case, not just the one incident Phase C's
-frozen reproducer already covers. Independent of M4/M5/M6: it needed nothing
+frozen reproducer already covers. Independent of M4–M7: it needed nothing
 from the real-path test suite or the effector abstraction to land, and it
 landed before both.
 
@@ -476,7 +481,57 @@ covered by `cargo test` (green build commits, red build reverts, the commit is
 exactly the staged set), so a regression in the I/O orchestration fails CI rather
 than requiring a manual run.
 
-## M5 — Abstract the effector off git (ADR 0003 follow-on)
+## M5 — Sandbox the verifier's execution environment (discharges R8)
+
+**Why first among what is left.** The verifier runs the outcome's own
+`build`/`test`/`test:e2e` in the local environment, as the operator's user.
+[R8](THREAT_MODEL.md) has carried this from the start, but it was filed beside
+residuals like R4 and R6, which describe a system that is safe but unfinished.
+R8 is not that. The threat model's actor table calls the agent untrusted and
+"assumed adversarial"; under Genesis that agent writes application source,
+`package.json` dependencies, and the build configuration, and the envelope then
+executes them on the host. `--ignore-scripts` (ADR 0009) stops dependency
+lifecycle scripts during resolve and install; it does nothing about the build
+step, whose whole job is to run the agent's code.
+
+Two things follow, and they are why this moved ahead of M6.
+
+- **Every gate above is downstream of this one.** Design conformance, the audit
+  non-regression check, the test stage, the e2e stage — each is a process spawned
+  *after* the verifier has already run the agent's code once. A gate cannot be
+  trusted to grade a program that has had the opportunity to modify the grader.
+- **"Never-writable" means never-writable through adjudication, not on disk.**
+  Reach denies a proposed `.git/` write. It does not stop a build-time side
+  effect from writing `.git/` directly, because that write never passes through
+  reach. This bounds what any `.git/`-resident control can claim, including the
+  clearance stamp.
+
+See [ADR 0014](adr/0014-the-verifier-execution-environment.md) for the decision
+and the rejected alternatives.
+
+**What lands, in two increments.**
+
+1. **Environment stripping** — every command the verifier spawns gets an
+   explicitly-constructed environment (minimal `PATH`, the variables the
+   toolchain needs, nothing else): no `HOME`, no `ANTHROPIC_API_KEY`, no
+   `SSH_AUTH_SOCK`. Roughly fifteen lines, no dependency. It does not contain a
+   hostile build; it removes the highest-value thing one would do. This is not
+   the milestone and must not be reported as it.
+2. **Containerised verification** — build, test, and e2e run in a disposable,
+   network-isolated container against a pinned toolchain image, with the
+   changeset worktree as the only writable mount. Resolve/install stays a
+   separate network-enabled step that installs from the envelope-computed
+   lockfile with `--ignore-scripts`.
+
+**Where it lives.** `envelope/src/worktree.rs` (`run_in`, `run_capturing_stdout`,
+`BuildVerifier::run`).
+
+**Exit criterion.** R8 moves from Residuals to Threats: a build step that
+attempts to read an ambient credential or reach the network fails, proven by a
+test that fails when the isolation is removed. Increment 1 alone does **not**
+meet this bar.
+
+## M6 — Abstract the effector off git (ADR 0003 follow-on)
 
 **Why.** The reversibility substrate is hardcoded to git. [ADR 0003](adr/0003-one-system-repository-outcome-external.md)
 and the root README are explicit that this is a property of *this* outcome (a
@@ -486,36 +541,40 @@ the outcome external — is not real until the effector is an abstraction.
 
 **What lands.** A reversibility interface behind which git is one implementation,
 so a non-code outcome can supply its own atomic-and-reversible effector without
-touching the trust kernel (`reach`, `policy`, the outcome gate stay identical).
+touching the trust kernel (`reach`, `policy` stay identical).
 
-**Where it lives.** `envelope/src/worktree.rs` and `envelope/src/reversible.rs`
-(the git specifics move behind a trait; the kernel depends on the trait).
+**Where it lives.** `envelope/src/worktree.rs` (the git specifics move behind a
+trait; the kernel depends on the trait).
 
 **Exit criterion.** The kernel adjudicates against the effector abstraction, git is
 one implementor, and a second (even a trivial append-log) demonstrates the seam is
 real. Not a residual discharge — an architectural follow-on that keeps the tool
 honest about being outcome-agnostic.
 
-## M6 — Harden the build sandbox and authenticate the seam (discharges R8, R3)
+**Note.** A companion gap sits outside this milestone and is not closed by it:
+the *policy* is hardcoded too. `invariants::reach`'s allowed prefixes are
+compile-time constants fitted to one React application's layout, and
+`project.json` configures the workspace, sources, and clearance but not reach.
+Until policy is data, every new outcome shape forks the trusted core. That
+deserves its own ADR before any code; it is recorded here so the
+"outcome-agnostic" claim is not read as resting on M6 alone.
 
-**Why.** Two residuals that only bind once the system is more than a local installation:
+## M7 — Authenticate the seam (discharges R3)
 
-- **[R8](THREAT_MODEL.md)** — running the outcome's build executes whatever the
-  build does on the host. The build *definition* is already protected (it's outside
-  the write allowlist), but a written source the build imports could run at build
-  time. The build needs a sandboxed, network-isolated, pinned-toolchain environment.
-- **[R3](THREAT_MODEL.md)** — the process seam exists (the advisor's only write
-  channel is the `envelope` binary), but it is not authenticated. Trust derives from
-  the local process boundary, not a versioned, authenticated wire (assumption **A4**).
-  A network-deployed agent needs that wire.
+**Why.** The process seam exists — the advisor's only write channel is the
+`envelope` binary — but it is not authenticated. Trust derives from the local
+process boundary, not a versioned, authenticated wire (assumption **A4**). A
+network-deployed agent needs that wire. Separated from M5 by
+[ADR 0014](adr/0014-the-verifier-execution-environment.md): the two were
+previously bundled, but R8 binds on the machine this already runs on, while R3
+binds only once the advisor is remote.
 
-**Where it lives.** The verifier's execution environment in `envelope/` (sandbox);
-the advisor↔envelope invocation and a versioned protocol per [ADR 0002](adr/0002-language-for-the-trusted-core.md) (seam).
+**Where it lives.** The advisor↔envelope invocation and a versioned protocol per
+[ADR 0002](adr/0002-language-for-the-trusted-core.md).
 
-**Exit criterion.** R8 and R3 move to Threats: the build runs in an isolated
-environment (a build-time side effect cannot touch the host or network), and the
-seam authenticates so a process that is not the trusted monitor cannot impersonate
-it — each with a test that fails when the property is removed.
+**Exit criterion.** R3 moves to Threats: the seam authenticates so a process that
+is not the trusted monitor cannot impersonate it, with a test that fails when the
+property is removed.
 
 ---
 
@@ -527,7 +586,7 @@ nothing above depends on them and each is a current-scope choice, not an oversig
 - **R1 (real telemetry)** and **R4 (per-service guardrails)** — the outcome gate is
   built; wiring a real, agent-isolated monitoring integration is a production concern
   beyond the current scope.
-- **  R2 (in-crate mediation)** — a hard isolation boundary (splitting the core into
+- **R2 (in-crate mediation)** — a hard isolation boundary (splitting the core into
   its own process) is explicitly traded away to keep the TCB a single small crate.
 - **R5 (resource bounds)** and **R6 (tamper-evident audit)** — throttling and a
   signed/hash-chained ledger matter for a long-lived deployment, not for proving the
