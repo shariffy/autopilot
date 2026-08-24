@@ -64,14 +64,18 @@ npm install && npm link   # once: puts `autopilot` on your PATH (tsx-run, no bui
 mkdir my-tool && cd my-tool
 autopilot init
 
-# prove the seam without calling Claude (mutates nothing):
-autopilot run --dry-run
-
 # file an observation into the ledger (does NOT run the agent):
 autopilot observe "support reports bulk user export is missing"
 
 # the real loop — reads the observation ledger and acts on it:
 autopilot run
+
+# prove the seam without calling Claude (mutates nothing).
+# needs the workspace directory to exist, so run it after the first
+# `autopilot run` has established one: reach clearance is a property of
+# the repo now, so `stage` must resolve the repo before it can judge
+# reach at all (ADR 0016).
+autopilot run --dry-run
 ```
 
 Auth is the Claude Agent SDK's: your Claude Code login (`~/.claude`) — i.e. your
