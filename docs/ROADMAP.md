@@ -230,9 +230,12 @@ neither depended on M3–M7.
 and the maintenance project (external).
 
 **Exit criterion — met.** Proven first with the `envelope` binary directly, not
-the advisor: a stage of `src/pages/ProductsPage.tsx` under
-`--clearance maintenance` is accepted, a stage of `src/data/products.json` is
-rejected, a hand-written trivial edit stages and commits green (`npm ci` +
+the advisor: against a Maintenance workspace, a stage of
+`src/pages/ProductsPage.tsx` is accepted and a stage of `src/data/products.json`
+is rejected. (That check was originally run by passing `--clearance maintenance`
+on the command line; [ADR 0016](adr/0016-clearance-is-a-property-of-the-repo.md)
+removed that flag — clearance now comes from the repo's stamp — so reproducing it
+today means stamping the workspace, not naming a clearance in the invocation.) a hand-written trivial edit stages and commits green (`npm ci` +
 build + audit non-regression). Then the advisor itself, reading the `posthog`
 sensor, landed a real green maintenance changeset — sortable Product columns —
 advisor-authored, envelope-committed.
@@ -597,9 +600,14 @@ property is removed.
 These residuals are known and deliberately deferred; they are not near-term because
 nothing above depends on them and each is a current-scope choice, not an oversight.
 
-- **R1 (real telemetry)** and **R4 (per-service guardrails)** — the outcome gate is
-  built; wiring a real, agent-isolated monitoring integration is a production concern
-  beyond the current scope.
+- **R1 (real telemetry)** and **R4 (one global threshold)** — the runtime trip
+  reads a telemetry file and compares a single `error_rate` ceiling; wiring a
+  real, agent-isolated monitoring integration, and thresholds finer than one
+  number for the whole outcome, are production concerns beyond the current scope.
+  This bullet previously described R4 as "per-service guardrails" and asserted
+  "the outcome gate is built" — that gate existed only in the simulation deleted
+  by [ADR 0015](adr/0015-delete-the-in-memory-showcase.md), and the claim did not
+  survive it.
 - **R2 (in-crate mediation)** — a hard isolation boundary (splitting the core into
   its own process) is explicitly traded away to keep the TCB a single small crate.
 - **R5 (resource bounds)** and **R6 (tamper-evident audit)** — throttling and a

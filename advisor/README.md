@@ -84,7 +84,9 @@ workspace is established fresh by the envelope — nothing needs a pre-existing 
 tree.
 
 Everything project-scoped comes from the **project you are standing in** — the
-nearest ancestor directory holding `project.json` (workspace, sources, clearance),
+nearest ancestor directory holding `project.json` (workspace and sources; the
+reach clearance is stamped on the workspace by the envelope, not recorded here —
+see [ADR 0016](../docs/adr/0016-clearance-is-a-property-of-the-repo.md)),
 alongside the observation ledger and the audit journal
 ([ADR 0007](../docs/adr/0007-the-project-as-the-unit-of-oversight.md)). Env is system-level only
 (see [`.env.example`](.env.example)): `ENVELOPE_BIN`, `MAX_TURNS`.
