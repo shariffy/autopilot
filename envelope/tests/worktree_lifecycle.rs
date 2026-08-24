@@ -1856,8 +1856,11 @@ fn establish_clone_adopts_a_test_less_predecessor_but_refuses_the_first_changese
     fs::write(predecessor.path().join("tsconfig.json"), FIXTURE_TSCONFIG)
         .expect("write predecessor tsconfig.json");
     fs::create_dir_all(predecessor.path().join("src")).expect("create predecessor src/");
-    fs::write(predecessor.path().join("src/index.ts"), FIXTURE_INDEX_TS_GREEN)
-        .expect("write predecessor src/index.ts");
+    fs::write(
+        predecessor.path().join("src/index.ts"),
+        FIXTURE_INDEX_TS_GREEN,
+    )
+    .expect("write predecessor src/index.ts");
     let status = Command::new("npm")
         .args(["install", "--package-lock-only", "--ignore-scripts"])
         .current_dir(predecessor.path())
