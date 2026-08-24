@@ -32,6 +32,8 @@ fn main() -> ExitCode {
         Some("begin") => cmd_begin(&args[2..]),
         Some("stage") => cmd_stage(&args[2..]),
         Some("commit") => cmd_commit(&args[2..]),
+        // Read or flip a repo's persistent clearance stamp (operator-only write).
+        Some("clearance") => cmd_clearance(&args[2..]),
         // Pure-transitive dependency maintenance: envelope-computed lockfile
         // refresh, no `package.json` change (ADR 0009).
         Some("refresh-deps") => cmd_refresh_deps(&args[2..]),
@@ -46,7 +48,7 @@ fn main() -> ExitCode {
         }
         None => {
             eprintln!(
-                "usage: envelope <subcommand> [args...]\n\nsubcommands:\n  adjudicate    establish    begin    stage\n  commit        refresh-deps reset    monitor"
+                "usage: envelope <subcommand> [args...]\n\nsubcommands:\n  adjudicate    establish    begin      stage\n  commit        refresh-deps reset      monitor\n  clearance"
             );
             ExitCode::from(2)
         }
@@ -98,9 +100,12 @@ fn adjudicate(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // The pure kernel: deny-by-default reach.
+    // The pure kernel: deny-by-default reach, under the clearance the repo's own
+    // persistent stamp names (`worktree::stamped_clearance`) — never a clearance
+    // the caller names.
     let action = Action::WriteFile { path: path.clone() };
-    if let Verdict::Deny(violations) = policy::Policy::reference_monitor().evaluate(&action) {
+    let clearance = clearance_from_stamp(&repo);
+    if let Verdict::Deny(violations) = policy::Policy::for_clearance(clearance).evaluate(&action) {
         let pairs: Vec<(&'static str, String)> = violations
             .into_iter()
             .map(|v| (v.invariant, v.reason))
@@ -144,26 +149,21 @@ fn cmd_begin(args: &[String]) -> ExitCode {
 }
 
 /// Stage one write into the open changeset, under the reach clearance in force.
-/// The clearance is chosen by lifecycle stage (Genesis vs Maintenance), supplied
-/// by the caller — never by the agent, whose write is what is being judged here.
+/// The clearance is a property of the REPO — a persistent stamp at
+/// `.git/envelope-clearance` (`worktree::stamped_clearance`), set by `establish`
+/// and flipped only by the operator via `envelope clearance --set`. It is never
+/// supplied on this command line: the write being judged cannot name the
+/// boundary that judges it.
 fn cmd_stage(args: &[String]) -> ExitCode {
     let mut flags = Flags::default();
     if let Err(code) = flags.parse(args) {
         return code;
     }
     let (Some(repo_raw), Some(path)) = (flags.repo, flags.path) else {
-        emit_error("usage: envelope stage --repo <dir> --path <repo-relative> --clearance <genesis|maintenance>  (file body on stdin)");
+        emit_error(
+            "usage: envelope stage --repo <dir> --path <repo-relative>  (file body on stdin)",
+        );
         return ExitCode::from(2);
-    };
-    let clearance = match flags.clearance.as_deref() {
-        Some("genesis") => Clearance::Genesis,
-        Some("maintenance") | None => Clearance::Maintenance,
-        Some(other) => {
-            emit_error(&format!(
-                "unknown clearance `{other}` (genesis|maintenance)"
-            ));
-            return ExitCode::from(2);
-        }
     };
     let mut content = Vec::new();
     if let Err(e) = std::io::stdin().read_to_end(&mut content) {
@@ -171,9 +171,19 @@ fn cmd_stage(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // Reach is a PURE decision — it does not depend on the repo existing, so
-    // it is made before resolving the path. A denial means the write never
-    // touches the tree (and the seam can be probed without a workspace).
+    let repo = match worktree::resolve_repo(&repo_raw) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("repo `{repo_raw}` not found: {e}"));
+            return ExitCode::from(2);
+        }
+    };
+
+    // Reach is still a PURE, deny-by-default decision over the action alone —
+    // but the clearance it runs under is now a property of the repo (its own
+    // persistent stamp), not the command line, so the repo must be resolved
+    // FIRST to know which clearance is in force before reach can be evaluated.
+    let clearance = clearance_from_stamp(&repo);
     let action = Action::WriteFile { path: path.clone() };
     if let Verdict::Deny(violations) = policy::Policy::for_clearance(clearance).evaluate(&action) {
         let pairs: Vec<(&'static str, String)> = violations
@@ -184,6 +194,24 @@ fn cmd_stage(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    emit_disposition(&path, &worktree::stage(&repo, &path, &content));
+    ExitCode::SUCCESS
+}
+
+/// Read or flip a repo's persistent clearance stamp (`.git/envelope-clearance`).
+/// Read-only by default; `--set` is the sole path that writes it, gated on an
+/// exact `genesis`/`maintenance` value — deliberately `--set`, not `--clearance`,
+/// so that removing `--clearance` from `Flags` makes it an unknown flag
+/// everywhere in this binary, including here.
+fn cmd_clearance(args: &[String]) -> ExitCode {
+    let mut flags = Flags::default();
+    if let Err(code) = flags.parse(args) {
+        return code;
+    }
+    let Some(repo_raw) = flags.repo else {
+        emit_error("usage: envelope clearance --repo <dir> [--set <genesis|maintenance>]");
+        return ExitCode::from(2);
+    };
     let repo = match worktree::resolve_repo(&repo_raw) {
         Ok(p) => p,
         Err(e) => {
@@ -191,14 +219,45 @@ fn cmd_stage(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    // Pass the clearance string directly — the policy kernel already validated
-    // it above, so "genesis"/"maintenance" are the only values that reach here.
-    let clearance_str = flags.clearance.as_deref().unwrap_or("maintenance");
-    emit_disposition(
-        &path,
-        &worktree::stage(&repo, &path, &content, clearance_str),
-    );
-    ExitCode::SUCCESS
+
+    let Some(value) = flags.set else {
+        println!(
+            "{{\"outcome\":\"clearance\",\"clearance\":{}}}",
+            json_str(&worktree::stamped_clearance(&repo))
+        );
+        return ExitCode::SUCCESS;
+    };
+    match value.as_str() {
+        "genesis" | "maintenance" => {
+            if let Err(e) = worktree::set_clearance(&repo, &value) {
+                emit_error(&e);
+                return ExitCode::from(2);
+            }
+            println!(
+                "{{\"outcome\":\"clearance_set\",\"clearance\":{}}}",
+                json_str(&value)
+            );
+            ExitCode::SUCCESS
+        }
+        other => {
+            emit_error(&format!(
+                "unknown clearance `{other}` (genesis|maintenance)"
+            ));
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// The `Clearance` a repo's stamp names, for the pure policy kernel. Shared by
+/// `adjudicate` and `cmd_stage` — `worktree::stamped_clearance` already fails
+/// closed to `"maintenance"` on anything but an exact `"genesis"`, so this is
+/// just the string-to-enum mapping.
+fn clearance_from_stamp(repo: &std::path::Path) -> Clearance {
+    if worktree::stamped_clearance(repo) == "genesis" {
+        Clearance::Genesis
+    } else {
+        Clearance::Maintenance
+    }
 }
 
 /// Close the changeset: verify with the outcome's own build, commit all on green
@@ -358,7 +417,8 @@ struct Flags {
     repo: Option<String>,
     path: Option<String>,
     intent: Option<String>,
-    clearance: Option<String>,
+    /// `clearance` only: the value to stamp with `--set`.
+    set: Option<String>,
     mode: Option<String>,
     source: Option<String>,
     /// `refresh-deps` only: `npm audit fix` within existing ranges, rather than
@@ -384,7 +444,7 @@ impl Flags {
                 "--repo" => self.repo = args.get(i + 1).cloned(),
                 "--path" => self.path = args.get(i + 1).cloned(),
                 "--intent" => self.intent = args.get(i + 1).cloned(),
-                "--clearance" => self.clearance = args.get(i + 1).cloned(),
+                "--set" => self.set = args.get(i + 1).cloned(),
                 "--mode" => self.mode = args.get(i + 1).cloned(),
                 "--source" => self.source = args.get(i + 1).cloned(),
                 "--telemetry" => self.telemetry = args.get(i + 1).cloned(),

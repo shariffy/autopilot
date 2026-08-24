@@ -192,7 +192,6 @@ export function buildToolServer(ctx: ToolContext, state: LoopState) {
         bin: ctx.envelopeBin,
         repo: ctx.repo,
         path: args.path,
-        clearance: ctx.clearance,
         content: args.content,
       })
       await journal(ctx, { action: 'stage', path: args.path, intent, verdict })

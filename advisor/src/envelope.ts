@@ -21,6 +21,8 @@ export type Verdict =
   | { outcome: 'rejected'; violations: { invariant: string; reason: string }[] }
   | { outcome: 'refused'; path?: string; reason: string }
   | { outcome: 'reset' }
+  | { outcome: 'clearance'; clearance: Clearance }
+  | { outcome: 'clearance_set'; clearance: Clearance }
   | { outcome: 'error'; reason: string }
 
 /** The reach clearance, chosen by lifecycle stage — never by the brain. */
@@ -71,19 +73,24 @@ export function establishWorkspace(opts: {
   return runEnvelope(opts.bin, args)
 }
 
-/** Stage one proposed write into the open changeset, under the named clearance. */
+/**
+ * Stage one proposed write into the open changeset. Reach clearance is no
+ * longer named by this call — the envelope reads it from the repo's own
+ * persistent stamp (`.git/envelope-clearance`), set by `establish` and flipped
+ * only by the operator via `envelope clearance --set`.
+ */
 export function stageWrite(opts: {
   bin: string
   repo: string
   path: string
-  clearance: Clearance
   content: string
 }): Promise<Verdict> {
-  return runEnvelope(
-    opts.bin,
-    ['stage', '--repo', opts.repo, '--path', opts.path, '--clearance', opts.clearance],
-    opts.content,
-  )
+  return runEnvelope(opts.bin, ['stage', '--repo', opts.repo, '--path', opts.path], opts.content)
+}
+
+/** Read the repo's persistent clearance stamp — never a value the brain names. */
+export function readClearance(opts: { bin: string; repo: string }): Promise<Verdict> {
+  return runEnvelope(opts.bin, ['clearance', '--repo', opts.repo])
 }
 
 /** Close the changeset: verify with the outcome's build, commit-all or report. */
@@ -139,6 +146,10 @@ export function describeVerdict(v: Verdict): string {
       return `REFUSED — ${v.reason}`
     case 'reset':
       return 'RESET'
+    case 'clearance':
+      return `CLEARANCE ${v.clearance}`
+    case 'clearance_set':
+      return `CLEARANCE_SET ${v.clearance}`
     case 'error':
       return `ERROR — ${v.reason}`
   }

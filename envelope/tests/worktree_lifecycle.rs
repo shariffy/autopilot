@@ -509,17 +509,22 @@ fn stage(ws: &Workspace, rel_path: &str, content: &str) -> String {
 
 /// Stage under an explicit clearance ("genesis" or "maintenance") — for tests
 /// that exercise the Maintenance-clearance reach rules directly (ADR 0009).
+///
+/// Clearance is now a repo-level stamp, not a `stage` flag (this milestone): set
+/// the stamp first via `envelope clearance --set`, then stage plainly. Only
+/// matters when no changeset is currently open — the marker freezes clearance at
+/// open time, exactly as before.
 fn stage_with_clearance(ws: &Workspace, rel_path: &str, content: &str, clearance: &str) -> String {
+    let set_out = envelope(
+        &["clearance", "--repo", ws.path_str(), "--set", clearance],
+        &[],
+    );
+    assert!(
+        set_out.contains("\"outcome\":\"clearance_set\""),
+        "setting clearance to {clearance}: {set_out}"
+    );
     envelope(
-        &[
-            "stage",
-            "--repo",
-            ws.path_str(),
-            "--path",
-            rel_path,
-            "--clearance",
-            clearance,
-        ],
+        &["stage", "--repo", ws.path_str(), "--path", rel_path],
         content.as_bytes(),
     )
 }
@@ -1932,5 +1937,219 @@ fn establish_clone_adopts_a_test_less_predecessor_but_refuses_the_first_changese
     assert!(
         out.contains("no `test` script declared"),
         "the refusal should name the missing test script: {out}"
+    );
+}
+
+// ---- 16. the clearance stamp: the repo names its own reach clearance, never
+// the command line ----
+
+/// The hole this milestone closes. Pre-fix, `stage` took reach clearance from
+/// an argv `--clearance` flag supplied by the SAME untrusted caller whose write
+/// was being judged: a workspace committed as a green baseline had no
+/// persistent memory of "this is now Maintenance" once the changeset that
+/// landed it closed, so the very next `stage` call could simply claim
+/// `--clearance genesis` and the envelope believed it — unfreezing `src/data/`
+/// (and, in the real advisor, the design system) for a caller that should never
+/// have had that reach. Run against the pre-fix code (`d0954cb`) with a literal
+/// `--clearance genesis` on this exact scenario, this test FAILED: the write
+/// came back `{"outcome":"staged","path":"src/data/anything.ts"}` instead of
+/// rejected — that failure was the proof the hole was real.
+///
+/// Post-fix, `--clearance` is not merely ignored, it does not exist as a
+/// `stage` flag at all (`the_clearance_flag_is_no_longer_accepted_by_stage`
+/// below pins that down) — reach clearance is read from the repo's own
+/// persistent stamp (`.git/envelope-clearance`), flipped only by the operator
+/// via `envelope clearance --set`. There is no longer any argv path that could
+/// widen it, `--clearance` or otherwise, so this test now proves the positive:
+/// a Maintenance-stamped workspace refuses a frozen-zone write via the
+/// ORDINARY stage invocation, unconditionally.
+#[test]
+fn a_maintenance_workspace_refuses_a_frozen_zone_write_regardless_of_the_command_line() {
+    let ws = Workspace::new("clearance-stamp-hole");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    // The workspace has launched (a green baseline is committed); stamp it
+    // Maintenance, the way the operator would once the outcome is live.
+    let out = stage_with_clearance(
+        &ws,
+        "src/data/anything.ts",
+        "export const x = 1;\n",
+        "maintenance",
+    );
+    assert!(
+        out.contains("\"outcome\":\"rejected\""),
+        "a Maintenance-stamped workspace must refuse a src/data/ write: {out}"
+    );
+    assert!(
+        out.contains("\"invariant\":\"reach\""),
+        "the rejection should name reach: {out}"
+    );
+    assert!(
+        !ws.path().join("src/data/anything.ts").exists(),
+        "a rejected write must never reach the tree"
+    );
+}
+
+/// A repo with no clearance stamp at all (e.g. one predating this milestone, or
+/// one whose stamp was somehow removed) adjudicates as Maintenance — fail
+/// closed to the narrow clearance, never the broad one.
+#[test]
+fn an_unstamped_repo_adjudicates_as_maintenance() {
+    let ws = Workspace::new("unstamped-repo");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    fs::remove_file(ws.path().join(".git").join("envelope-clearance"))
+        .expect("remove the clearance stamp");
+
+    let out = envelope(
+        &[
+            "stage",
+            "--repo",
+            ws.path_str(),
+            "--path",
+            "src/data/anything.ts",
+        ],
+        b"export const x = 1;\n",
+    );
+    assert!(
+        out.contains("\"outcome\":\"rejected\""),
+        "an unstamped repo must adjudicate as Maintenance (fail closed): {out}"
+    );
+    assert!(
+        out.contains("\"invariant\":\"reach\""),
+        "the rejection should name reach: {out}"
+    );
+}
+
+/// A malformed stamp (anything other than exactly `genesis` or `maintenance`)
+/// falls back to Maintenance — same fail-closed behaviour as a missing stamp.
+#[test]
+fn a_malformed_stamp_falls_back_to_maintenance() {
+    let ws = Workspace::new("malformed-stamp");
+    land_green_fixture(&ws, "add the fixture ts project");
+
+    fs::write(
+        ws.path().join(".git").join("envelope-clearance"),
+        b"nonsense\n",
+    )
+    .expect("write a garbage clearance stamp");
+
+    let out = envelope(
+        &[
+            "stage",
+            "--repo",
+            ws.path_str(),
+            "--path",
+            "src/data/anything.ts",
+        ],
+        b"export const x = 1;\n",
+    );
+    assert!(
+        out.contains("\"outcome\":\"rejected\""),
+        "a malformed stamp must fall back to Maintenance (fail closed): {out}"
+    );
+    assert!(
+        out.contains("\"invariant\":\"reach\""),
+        "the rejection should name reach: {out}"
+    );
+}
+
+/// `establish` stamps Genesis, and the operator-only `clearance --set` command
+/// flips it: a path only Genesis reaches (the design system) stages right
+/// after establish, then is rejected once the operator sets Maintenance.
+#[test]
+fn establish_stamps_genesis_and_the_clearance_command_flips_it() {
+    let ws = Workspace::new("establish-stamps-genesis");
+    let out = establish_empty(&ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+
+    let read_out = envelope(&["clearance", "--repo", ws.path_str()], &[]);
+    assert!(
+        read_out.contains("\"outcome\":\"clearance\"")
+            && read_out.contains("\"clearance\":\"genesis\""),
+        "establish should stamp genesis: {read_out}"
+    );
+
+    let out = stage(
+        &ws,
+        "src/design-system/Button.tsx",
+        "export const Button = 0;\n",
+    );
+    assert!(
+        out.contains("\"outcome\":\"staged\""),
+        "the genesis stamp should let a fresh workspace write the design system: {out}"
+    );
+    reset(&ws);
+
+    let set_out = envelope(
+        &["clearance", "--repo", ws.path_str(), "--set", "maintenance"],
+        &[],
+    );
+    assert!(
+        set_out.contains("\"outcome\":\"clearance_set\""),
+        "{set_out}"
+    );
+
+    let out = envelope(
+        &[
+            "stage",
+            "--repo",
+            ws.path_str(),
+            "--path",
+            "src/design-system/Button.tsx",
+        ],
+        b"export const Button = 0;\n",
+    );
+    assert!(
+        out.contains("\"outcome\":\"rejected\""),
+        "once flipped to maintenance, the design system must be frozen: {out}"
+    );
+}
+
+/// `--clearance` is not merely ignored by `stage` — it is not a recognised flag
+/// at all, so `stage --clearance genesis` fails as an unknown flag (exit 2),
+/// never as a silently-accepted no-op.
+#[test]
+fn the_clearance_flag_is_no_longer_accepted_by_stage() {
+    let ws = Workspace::new("clearance-flag-removed");
+    let out = establish_empty(&ws);
+    assert!(out.contains("\"outcome\":\"established\""), "{out}");
+
+    let mut cmd = Command::new(envelope_bin());
+    cmd.args([
+        "stage",
+        "--repo",
+        ws.path_str(),
+        "--path",
+        "package.json",
+        "--clearance",
+        "genesis",
+    ])
+    .envs(git_identity_envs())
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("spawn envelope binary");
+    child
+        .stdin
+        .take()
+        .expect("envelope stdin")
+        .write_all(FIXTURE_PACKAGE_JSON.as_bytes())
+        .expect("write envelope stdin");
+    let out = child.wait_with_output().expect("wait on envelope");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "an unknown `--clearance` flag should exit 2: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        combined.to_lowercase().contains("unknown flag"),
+        "the failure should name the unrecognised flag: {combined}"
     );
 }

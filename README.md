@@ -56,8 +56,11 @@ autopilot observe "…what is noticed or wanted…"    # file into the ledger
 autopilot run                                      # act on the ledger
 ```
 
-A project directory holds `project.json` (the workspace to build, read-only
-sources, the clearance in force), the observation ledger, and the audit journal.
+A project directory holds `project.json` (the workspace to build and the
+read-only sources it may observe), the observation ledger, and the audit journal.
+The workspace's reach clearance is not in that file: the envelope stamps it on
+the repo itself and the operator flips it with `envelope clearance --set`, so the
+untrusted brain has nothing to relay and nothing to disagree with (ADR 0016).
 See [advisor/README](advisor/README.md).
 
 ## Documentation

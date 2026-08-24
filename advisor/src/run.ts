@@ -16,7 +16,7 @@ import { access, constants } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runLoop } from './loop.js'
-import { stageWrite, describeVerdict } from './envelope.js'
+import { stageWrite, readClearance, describeVerdict, type Clearance } from './envelope.js'
 import { readObservations, renderObservations } from './observations.js'
 import { currentProject } from './project.js'
 
@@ -38,15 +38,30 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * The reach clearance in force for `workspace`, read from the envelope's own
+ * persistent stamp (`.git/envelope-clearance`) — never decided here. A
+ * workspace that does not exist yet, or exists but is not yet a git repo, has
+ * nothing established: treat it as Genesis, so the brain gets the genesis
+ * brief for its first run. Any other failure to read the stamp fails closed to
+ * Maintenance, the same fail-closed default the envelope itself uses.
+ */
+async function deriveClearance(bin: string, workspace: string): Promise<Clearance> {
+  if (!(await exists(workspace)) || !(await exists(path.join(workspace, '.git')))) return 'genesis'
+  const verdict = await readClearance({ bin, repo: workspace })
+  return verdict.outcome === 'clearance' ? verdict.clearance : 'maintenance'
+}
+
 export async function run(argv: string[]): Promise<void> {
   const dryRun = argv.includes('--dry-run')
 
   const project = await currentProject()
+  const envelopeBin = envPath('ENVELOPE_BIN', path.join(systemRoot, 'envelope', 'target', 'debug', 'envelope'))
   const ctx = {
     repo: project.workspace,
     sources: project.sources,
-    envelopeBin: envPath('ENVELOPE_BIN', path.join(systemRoot, 'envelope', 'target', 'debug', 'envelope')),
-    clearance: project.clearance,
+    envelopeBin,
+    clearance: await deriveClearance(envelopeBin, project.workspace),
     auditPath: project.auditPath,
   }
   const observationsDir = project.observationsDir
@@ -71,13 +86,22 @@ export async function run(argv: string[]): Promise<void> {
   if (dryRun) {
     // Exercise the brain → envelope → verdict path without the model and without
     // mutating anything: a never-writable path is rejected before it touches disk,
-    // proving the seam is wired and parsed correctly. No workspace required.
+    // proving the seam is wired and parsed correctly. Needs a workspace DIRECTORY
+    // to already exist now (not necessarily established) — reach clearance is a
+    // property of the repo (its own stamp, this milestone), so `stage` resolves
+    // the repo before it can evaluate reach at all, unlike before.
+    if (!(await exists(ctx.repo))) {
+      console.error(
+        '\n--dry-run: no workspace directory yet, so there is nothing to resolve the seam against.',
+      )
+      console.error('run `autopilot run` once to establish the workspace, then --dry-run again.')
+      process.exit(0)
+    }
     console.error('\n--dry-run: probing the envelope seam (never-zone path, mutates nothing)\n')
     const verdict = await stageWrite({
       bin: ctx.envelopeBin,
       repo: ctx.repo,
       path: 'secrets/__envelope_probe__.ts',
-      clearance: ctx.clearance,
       content: '// probe',
     })
     console.error(describeVerdict(verdict))

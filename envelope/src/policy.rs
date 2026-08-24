@@ -23,13 +23,6 @@ impl Policy {
         Policy { clearance }
     }
 
-    /// The canonical reference monitor for an app under maintenance — the narrow,
-    /// fitted clearance that the structural-trust thesis is about. Genesis-stage
-    /// adjudication is constructed explicitly with [`Policy::for_clearance`].
-    pub fn reference_monitor() -> Self {
-        Policy::for_clearance(Clearance::Maintenance)
-    }
-
     /// Evaluate every action-only invariant and aggregate their findings. Deny if
     /// any rule is violated; otherwise allow. The rule is the reach clearance
     /// currently in force.

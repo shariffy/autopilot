@@ -18,17 +18,21 @@
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import type { Clearance } from './envelope.js'
 
 // Relative paths in project.json resolve against the project directory, so a
 // project home is relocatable as a unit.
+//
+// Clearance is deliberately NOT part of this file (this milestone): the
+// envelope stamps it on the repo itself (`.git/envelope-clearance`) at
+// `establish` time and the operator flips it with `envelope clearance --set`
+// — a single source of truth, so nothing here can diverge from it. Zod
+// ignores unknown keys by default, so an existing project.json that still
+// carries a `clearance` field keeps parsing; it is simply ignored.
 const ProjectFile = z.object({
   /** The outcome to establish and build/maintain. */
   workspace: z.string(),
   /** Named read-only sources the brain may observe; empty = pure greenfield. */
   sources: z.record(z.string(), z.string()).default({}),
-  /** Reach clearance in force — lifecycle state, flipped by the operator, never the brain. */
-  clearance: z.enum(['genesis', 'maintenance']).default('genesis'),
 })
 
 export interface Project {
@@ -36,7 +40,6 @@ export interface Project {
   dir: string
   workspace: string
   sources: Record<string, string>
-  clearance: Clearance
   observationsDir: string
   auditPath: string
 }
@@ -76,7 +79,6 @@ export async function loadProject(dir: string): Promise<Project> {
     dir,
     workspace: resolve(parsed.workspace),
     sources: Object.fromEntries(Object.entries(parsed.sources).map(([n, p]) => [n, resolve(p)])),
-    clearance: parsed.clearance,
     observationsDir: path.join(dir, 'observations'),
     auditPath: path.join(dir, 'advisor-audit.jsonl'),
   }
@@ -94,7 +96,6 @@ export async function init(): Promise<void> {
   const scaffold = {
     workspace: './workspace',
     sources: {},
-    clearance: 'genesis',
   }
   try {
     await writeFile(file, `${JSON.stringify(scaffold, null, 2)}\n`, { flag: 'wx' })
@@ -111,7 +112,11 @@ project.json:
   workspace   where the outcome is established and built (default ./workspace)
   sources     named read-only roots the brain may observe, e.g.
               { "predecessor": "../the-old-app" } — empty means pure greenfield
-  clearance   "genesis" now; flip to "maintenance" once the outcome exists
+
+the workspace's reach clearance is stamped by the envelope itself at establish
+time (genesis) and is not part of this file; flip it to maintenance once the
+outcome exists with:
+  envelope clearance --repo ./workspace --set maintenance
 
 next:
   autopilot observe "…what is noticed or wanted…"   # file the first observation

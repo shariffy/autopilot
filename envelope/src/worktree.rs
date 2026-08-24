@@ -497,14 +497,14 @@ fn json_object<'a>(json: &'a str, key: &str) -> Option<&'a str> {
 
 /// Open a changeset: require a clean work tree so the baseline (`HEAD`) is
 /// well-defined and a later revert is exact, then record the open changeset so
-/// `stage` and `commit` can refuse to act outside one. Fails closed. Defaults
-/// to Maintenance clearance (deny-by-default) — the agent proposes clearance
-/// via `stage`'s `--clearance` flag, which persists it at first auto-open.
+/// `stage` and `commit` can refuse to act outside one. Fails closed. The
+/// clearance it opens under is read from the repo's own persistent stamp
+/// (`stamped_clearance`) — never supplied by the caller, and never by the agent.
 pub fn begin(repo: &Path) -> Disposition {
     if let Err(reason) = ensure_clean(repo) {
         return Disposition::Refused { reason };
     }
-    match open_changeset(repo, "maintenance") {
+    match open_changeset(repo, &stamped_clearance(repo)) {
         Ok(()) => Disposition::Begun,
         Err(reason) => Disposition::Refused { reason },
     }
@@ -523,14 +523,17 @@ pub fn begin(repo: &Path) -> Disposition {
 /// optional is the assertion itself: no changeset exists without a clean baseline
 /// behind it, so a revert is always well-defined.
 ///
-/// `clearance` is persisted as line 1 of the changeset marker on auto-open;
-/// once a changeset is open its clearance is frozen there (T16, ADR 0013).
-pub fn stage(repo: &Path, rel_path: &str, content: &[u8], clearance: &str) -> Disposition {
+/// The clearance staged into is the repo's own persistent stamp
+/// (`stamped_clearance`) — never a caller-supplied argument, so the write being
+/// judged can never name the boundary that judges it. It is persisted as line 1
+/// of the changeset marker on auto-open; once a changeset is open its clearance
+/// is frozen there (T16, ADR 0013), regardless of what the stamp says later.
+pub fn stage(repo: &Path, rel_path: &str, content: &[u8]) -> Disposition {
     if !changeset_is_open(repo) {
         if let Err(reason) = ensure_clean(repo) {
             return Disposition::Refused { reason };
         }
-        if let Err(reason) = open_changeset(repo, clearance) {
+        if let Err(reason) = open_changeset(repo, &stamped_clearance(repo)) {
             return Disposition::Refused { reason };
         }
     }
@@ -692,10 +695,9 @@ pub fn adjudicate_write(
     if let Disposition::Refused { reason } = begin(repo) {
         return Disposition::Refused { reason };
     }
-    // `begin` opened the changeset with Maintenance clearance; `stage` sees it
-    // open and will not re-open, so the clearance argument here is not used for
-    // auto-open — but the signature requires one (deny-by-default, "maintenance").
-    if let Disposition::Refused { reason } = stage(repo, rel_path, content, "maintenance") {
+    // `begin` already opened the changeset (clearance from the repo's own
+    // stamp); `stage` sees it open and will not re-open.
+    if let Disposition::Refused { reason } = stage(repo, rel_path, content) {
         return Disposition::Refused { reason };
     }
     // A one-shot edit owns its whole changeset, so a red build resets to a clean
@@ -794,6 +796,11 @@ fn establish_empty(workspace: &Path) -> Disposition {
             reason: "could not create the baseline commit".to_string(),
         };
     }
+    // A freshly established workspace is pre-launch: stamp Genesis so the
+    // first changeset against it opens under the broad clearance.
+    if let Err(reason) = set_clearance(workspace, "genesis") {
+        return Disposition::Refused { reason };
+    }
     Disposition::Established {
         detail: "empty workspace initialised".to_string(),
     }
@@ -824,6 +831,12 @@ fn establish_clone(workspace: &Path, source: &Path, verifier: &BuildVerifier) ->
                 tail(&output, 1200)
             ),
         };
+    }
+    // A freshly adopted workspace is pre-launch, same as `establish_empty`:
+    // stamp Genesis so the first changeset against it opens under the broad
+    // clearance.
+    if let Err(reason) = set_clearance(workspace, "genesis") {
+        return Disposition::Refused { reason };
     }
     Disposition::Established {
         detail: format!("adopted clone of `{src}`; baseline build green"),
@@ -871,6 +884,39 @@ pub(crate) fn ensure_clean(repo: &Path) -> Result<(), String> {
 /// changeset, forge its membership, or close one — it can only ask, and be judged.
 fn changeset_marker(repo: &Path) -> PathBuf {
     repo.join(".git").join("envelope-changeset")
+}
+
+/// Where the per-repo, persistent clearance stamp lives — inside `.git`, the same
+/// never-writable zone as the changeset marker (see `invariants::reach`'s
+/// `NEVER_WRITE_PREFIXES`), so the agent whose reach it decides can never touch it.
+/// Distinct from `changeset_marker`: that marker is per-changeset and deleted on
+/// close; this stamp is per-repo and persists across changesets — it is what
+/// `begin`/`stage` read to decide the clearance a NEW changeset opens under.
+fn clearance_stamp(repo: &Path) -> PathBuf {
+    repo.join(".git").join("envelope-clearance")
+}
+
+/// The clearance stamped on this repo: a single line, `genesis` or `maintenance`.
+///
+/// Missing, unreadable, or not exactly one of those two values returns
+/// `"maintenance"` — fail closed to the NARROW clearance, never the broad one.
+/// This is the single most important line in this module: an untrusted advisor
+/// process must never be able to widen its own reach by leaving the stamp absent
+/// or malformed, so every failure mode here resolves to the same clearance a
+/// missing stamp would deny-by-default into.
+pub fn stamped_clearance(repo: &Path) -> String {
+    match std::fs::read_to_string(clearance_stamp(repo)) {
+        Ok(s) if s.trim() == "genesis" => "genesis".to_string(),
+        _ => "maintenance".to_string(),
+    }
+}
+
+/// Write the repo's persistent clearance stamp. Called by `establish` (always
+/// `"genesis"` — a freshly established workspace is pre-launch) and by the
+/// operator-only `envelope clearance --set` subcommand.
+pub fn set_clearance(repo: &Path, clearance: &str) -> Result<(), String> {
+    std::fs::write(clearance_stamp(repo), format!("{clearance}\n"))
+        .map_err(|e| format!("could not set the clearance stamp: {e}"))
 }
 
 fn changeset_is_open(repo: &Path) -> bool {
