@@ -111,10 +111,7 @@ const NEVER_WRITE_PREFIXES: &[&str] = &[
 impl Clearance {
     /// Find any reach violations this clearance raises for `action`. Pure: no I/O.
     pub fn check(self, action: &Action) -> Vec<Violation> {
-        let path = match action {
-            Action::WriteFile { path, .. } => path,
-            _ => return vec![],
-        };
+        let Action::WriteFile { path, .. } = action;
 
         let Some(normalized) = normalize(path) else {
             return vec![Violation {
@@ -242,14 +239,12 @@ mod tests {
     fn maintenance(path: &str) -> Vec<Violation> {
         Clearance::Maintenance.check(&Action::WriteFile {
             path: path.to_string(),
-            bytes: 1,
         })
     }
 
     fn genesis(path: &str) -> Vec<Violation> {
         Clearance::Genesis.check(&Action::WriteFile {
             path: path.to_string(),
-            bytes: 1,
         })
     }
 

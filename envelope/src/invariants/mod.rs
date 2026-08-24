@@ -2,10 +2,8 @@
 //!
 //! An invariant is *pure* — given a proposed action it returns any violations and
 //! performs no I/O. Purity is what makes the rule set auditable: you can read each
-//! one in isolation and know exactly what it forbids. `immutable_policy` is a free
-//! function in [`crate::policy`]; reach is clearance-parameterised
-//! ([`reach::Clearance`]) because *where* the agent may write depends on the
-//! outcome's lifecycle stage.
+//! one in isolation and know exactly what it forbids. Reach is
+//! clearance-parameterised ([`reach::Clearance`]) because *where* the agent may
+//! write depends on the outcome's lifecycle stage.
 
-pub mod change_shape;
 pub mod reach;

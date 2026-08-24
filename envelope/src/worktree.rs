@@ -1,12 +1,10 @@
 //! The real, git-backed effector: how the trusted core actually touches the
 //! governed repository.
 //!
-//! The in-memory harness (`main`, `reversible::World`) proves the *shape* of the
-//! guarantees in-memory. This module is where they become real: proposed writes
-//! are applied to a working tree on disk, verified by the repository's own build,
-//! and then committed or reverted — using git itself as the reversibility
-//! substrate. Nothing here is trusted to the agent; it is the trusted core doing
-//! I/O on the agent's behalf.
+//! Proposed writes are applied to a working tree on disk, verified by the
+//! repository's own build, and then committed or reverted — using git itself
+//! as the reversibility substrate. Nothing here is trusted to the agent; it is
+//! the trusted core doing I/O on the agent's behalf.
 //!
 //! Adjudication is over a **changeset**, not a single write (ADR 0005): reach is
 //! enforced on every write (by the caller, via the shared [`crate::policy`]
@@ -200,8 +198,8 @@ impl BuildVerifier {
         if clearance == "maintenance" && staged.iter().any(|p| p == "package.json") {
             let (ok, head_manifest) = git(repo, &["show", "HEAD:package.json"]);
             if ok {
-                let cur_manifest = std::fs::read_to_string(repo.join("package.json"))
-                    .unwrap_or_default();
+                let cur_manifest =
+                    std::fs::read_to_string(repo.join("package.json")).unwrap_or_default();
                 if json_object(&head_manifest, "scripts") != json_object(&cur_manifest, "scripts") {
                     log.push_str(
                         "\nMaintenance changeset may not alter the `scripts` object in \

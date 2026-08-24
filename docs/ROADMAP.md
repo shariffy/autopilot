@@ -16,11 +16,14 @@ a thing is safe without a test that fails when it isn't is not a discharge.
 
 ## Where we are
 
-The trust boundary and its two enaction paths — the in-memory `Harness::enact` and
-the real git-backed `begin → stage → commit` — are built and tested, both the pure
-kernel (`reach`, `policy`, the outcome gate) and, as of M4, the real I/O path
-itself. The advisor runs on the Claude Agent SDK with its only write channel being
-the `envelope` binary.
+The trust boundary and its single enaction path — the git-backed
+`begin → stage → commit` — are built and tested, both the pure kernel (`reach`,
+`policy`) and, as of M4, the real I/O path itself. The in-memory simulation that
+used to sit beside it was deleted in
+[ADR 0015](adr/0015-delete-the-in-memory-showcase.md): it was reachable only from
+a demo printout, no advisor ever invoked it, and five threat-model rows were
+citing it as their implementation. The advisor runs on the Claude Agent SDK with
+its only write channel being the `envelope` binary.
 
 **M1 has run — as one continuous history through Phase D.** The published demo
 repo is the result of a single redo on 2026-07-25 that superseded a

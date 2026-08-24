@@ -1,123 +1,25 @@
-//! Envelope — a runnable skeleton of the trusted core.
+//! Envelope — the trusted core's CLI.
 //!
-//! An untrusted agent proposes a batch of changes; the reference monitor decides
-//! the fate of each one deterministically. The point: not a single
-//! outcome depends on the agent being well-behaved. Trust comes from the
-//! boundary, not the brain.
+//! Every subcommand here is a real path onto the boundary that bounds an
+//! untrusted agent: adjudicating a single write, running the begin/stage/commit
+//! changeset lifecycle, establishing a workspace, refreshing dependencies, or
+//! monitoring a deployed change's telemetry. Not a single outcome depends on
+//! the agent being well-behaved — trust comes from the boundary, not the
+//! brain, and this binary is how the boundary is invoked.
 
-mod agent;
-mod decision_log;
 mod design;
-mod guardrails;
-mod harness;
 mod invariants;
 mod policy;
-mod reversible;
 mod runtime;
-mod telemetry;
 mod types;
-mod verifier;
 mod worktree;
 
-use harness::Harness;
 use invariants::reach::Clearance;
-use telemetry::StubTelemetry;
-use types::{Action, Outcome, Verdict, Verification};
-use verifier::StubVerifier;
+use types::{Action, Verdict};
 use worktree::{BuildVerifier, Disposition, Establish};
 
-use std::collections::BTreeMap;
-use std::fs;
 use std::io::Read;
 use std::process::ExitCode;
-
-/// Aggregate result of running a batch of proposals through the harness.
-struct Summary {
-    committed: u32,
-    rejected: u32,
-    denials: BTreeMap<&'static str, u32>,
-    reverted: Vec<String>,
-}
-
-impl Summary {
-    fn rolled_back(&self) -> usize {
-        self.reverted.len()
-    }
-}
-
-/// Build the harness wired to the showcase's trusted sources. Shared by `main` and
-/// the end-to-end test so they exercise exactly the same configuration.
-fn showcase_harness() -> Harness {
-    // Trusted telemetry, seeded out-of-band: a stand-in for a monitoring system
-    // the agent cannot write to.
-    let telemetry = StubTelemetry::new()
-        .set(
-            "admin-dashboard",
-            vec![("error_rate", 0.004), ("task_completion", 0.94)],
-        )
-        .set(
-            "admin-onboarding",
-            vec![("error_rate", 0.006), ("task_completion", 0.71)],
-        );
-
-    // Trusted verifier, seeded out-of-band: a stand-in for CI plus agentic UI
-    // verification. The agent cannot self-certify.
-    let verifier = StubVerifier::new()
-        .set(
-            "admin-dashboard",
-            Verification {
-                typecheck: true,
-                tests: true,
-                ui_verified: true,
-            },
-        )
-        .set(
-            "admin-reports",
-            Verification {
-                typecheck: true,
-                tests: true,
-                ui_verified: false,
-            },
-        )
-        .set(
-            "admin-onboarding",
-            Verification {
-                typecheck: true,
-                tests: true,
-                ui_verified: true,
-            },
-        );
-
-    Harness::new(Box::new(telemetry), Box::new(verifier))
-}
-
-/// Run every proposal through the harness, returning the aggregate verdicts.
-/// Reads the structured `Outcome` return values — proof they are machine-usable,
-/// not merely lines in a log.
-fn run(harness: &mut Harness) -> Summary {
-    let mut summary = Summary {
-        committed: 0,
-        rejected: 0,
-        denials: BTreeMap::new(),
-        reverted: vec![],
-    };
-
-    for (intent, action) in agent::proposals() {
-        println!("──────────────────────────────────────────────────────────");
-        match harness.enact(&intent, action) {
-            Outcome::Committed => summary.committed += 1,
-            Outcome::Rejected(violations) => {
-                summary.rejected += 1;
-                for v in &violations {
-                    *summary.denials.entry(v.invariant).or_insert(0) += 1;
-                }
-            }
-            Outcome::RolledBack { breached } => summary.reverted.push(breached),
-        }
-    }
-
-    summary
-}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -139,12 +41,14 @@ fn main() -> ExitCode {
         // revert the deployed change on an error-rate breach. No advisor input.
         Some("monitor") => cmd_monitor(&args[2..]),
         Some(other) => {
-            eprintln!("unknown subcommand `{other}`; run with no arguments for the showcase");
+            eprintln!("unknown subcommand `{other}`");
             ExitCode::from(2)
         }
         None => {
-            run_showcase();
-            ExitCode::SUCCESS
+            eprintln!(
+                "usage: envelope <subcommand> [args...]\n\nsubcommands:\n  adjudicate    establish    begin    stage\n  commit        refresh-deps reset    monitor"
+            );
+            ExitCode::from(2)
         }
     }
 }
@@ -154,9 +58,9 @@ fn main() -> ExitCode {
 ///
 /// Channel discipline IS the trust boundary. The brain can express only a write —
 /// `--repo`, `--path`, `--intent`, with the file body on stdin. The verdict is
-/// decided by the same pure policy kernel the showcase uses, then enacted, verified by
-/// the repo's own build, and committed or reverted. The brain supplies none of
-/// the things it is judged by; it cannot even name them here.
+/// decided by the same pure policy kernel every subcommand uses, then enacted,
+/// verified by the repo's own build, and committed or reverted. The brain
+/// supplies none of the things it is judged by; it cannot even name them here.
 fn adjudicate(args: &[String]) -> ExitCode {
     let mut repo_raw = None;
     let mut path = None;
@@ -194,11 +98,8 @@ fn adjudicate(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // Same pure kernel as the showcase: deny-by-default reach plus immutable-policy.
-    let action = Action::WriteFile {
-        path: path.clone(),
-        bytes: content.len(),
-    };
+    // The pure kernel: deny-by-default reach.
+    let action = Action::WriteFile { path: path.clone() };
     if let Verdict::Deny(violations) = policy::Policy::reference_monitor().evaluate(&action) {
         let pairs: Vec<(&'static str, String)> = violations
             .into_iter()
@@ -270,13 +171,10 @@ fn cmd_stage(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // Reach (and immutable-policy) is a PURE decision — it does not depend on the
-    // repo existing, so it is made before resolving the path. A denial means the
-    // write never touches the tree (and the seam can be probed without a workspace).
-    let action = Action::WriteFile {
-        path: path.clone(),
-        bytes: content.len(),
-    };
+    // Reach is a PURE decision — it does not depend on the repo existing, so
+    // it is made before resolving the path. A denial means the write never
+    // touches the tree (and the seam can be probed without a workspace).
+    let action = Action::WriteFile { path: path.clone() };
     if let Verdict::Deny(violations) = policy::Policy::for_clearance(clearance).evaluate(&action) {
         let pairs: Vec<(&'static str, String)> = violations
             .into_iter()
@@ -296,7 +194,10 @@ fn cmd_stage(args: &[String]) -> ExitCode {
     // Pass the clearance string directly — the policy kernel already validated
     // it above, so "genesis"/"maintenance" are the only values that reach here.
     let clearance_str = flags.clearance.as_deref().unwrap_or("maintenance");
-    emit_disposition(&path, &worktree::stage(&repo, &path, &content, clearance_str));
+    emit_disposition(
+        &path,
+        &worktree::stage(&repo, &path, &content, clearance_str),
+    );
     ExitCode::SUCCESS
 }
 
@@ -594,78 +495,4 @@ fn json_str(s: &str) -> String {
     }
     out.push('"');
     out
-}
-
-fn run_showcase() {
-    println!("ENVELOPE — trusted core showcase");
-    println!("The agent is untrusted. Every proposal passes through the reference");
-    println!("monitor, which produces each verdict below deterministically.\n");
-
-    let mut harness = showcase_harness();
-    let summary = run(&mut harness);
-
-    let world = harness.world();
-    println!("══════════════════════════════════════════════════════════");
-    println!(
-        "SUMMARY   committed={}  rejected={}  rolled_back={}",
-        summary.committed,
-        summary.rejected,
-        summary.rolled_back()
-    );
-    println!(
-        "WORLD     files={}  deployed={}",
-        world.file_count(),
-        world.deploy_count()
-    );
-    if !summary.denials.is_empty() {
-        let breakdown: Vec<String> = summary
-            .denials
-            .iter()
-            .map(|(invariant, n)| format!("{invariant}={n}"))
-            .collect();
-        println!("DENIALS   {}", breakdown.join("  "));
-    }
-    if !summary.reverted.is_empty() {
-        println!("REVERTED  {}", summary.reverted.join(", "));
-    }
-
-    // Persist the append-only audit trail. An accountability surface has to be
-    // durable and re-readable, not merely streamed to stdout.
-    let trail = harness.log().entries();
-    let audit_path = "target/envelope-audit.log";
-    match fs::write(audit_path, format!("{}\n", trail.join("\n"))) {
-        Ok(()) => println!(
-            "AUDIT     {} entries persisted to {audit_path}",
-            trail.len()
-        ),
-        Err(e) => println!("AUDIT     could not persist trail: {e}"),
-    }
-
-    println!("\nNone of these outcomes required the agent to be trustworthy.");
-    println!("The envelope produced them by construction.");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Locks in the showcase's headline result: the exact verdicts the batch
-    /// depends on. If a future change alters the boundary's behaviour, this fails
-    /// rather than the showcase silently telling a different story.
-    #[test]
-    fn showcase_batch_produces_expected_verdicts() {
-        let mut harness = showcase_harness();
-        let summary = run(&mut harness);
-
-        assert_eq!(summary.committed, 3);
-        assert_eq!(summary.rejected, 4);
-        assert_eq!(summary.rolled_back(), 1);
-        assert_eq!(summary.reverted, vec!["task_completion".to_string()]);
-        assert_eq!(summary.denials.get("reach"), Some(&2));
-        assert_eq!(summary.denials.get("change_shape"), Some(&1));
-        assert_eq!(summary.denials.get("immutable_policy"), Some(&1));
-
-        assert_eq!(harness.world().file_count(), 2);
-        assert_eq!(harness.world().deploy_count(), 1);
-    }
 }

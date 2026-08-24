@@ -21,16 +21,15 @@ how the core, the brain, and the outcome fit together.*
 ## Quick start
 
 ```sh
-cargo run     # watch the boundary judge a batch of agent proposals
-cargo test    # 19 tests: the invariants, the gates, reversibility, and the end-to-end batch
+cargo test    # the invariants, the design-conformance stage, and the git-backed lifecycle
 ```
 
 No dependencies. The entire trusted computing base is the code under `src/`.
 
 ### Operating for real
 
-The batch above runs the boundary in-memory to show its *shape*. The same trusted
-kernel also adjudicates real writes to a real repository:
+The trusted kernel adjudicates real writes to a real repository. The subcommands
+are the whole interface — there is no other way to reach it:
 
 ```sh
 # decide one proposed write: reach-check it, apply it, verify with the repo's own
@@ -39,79 +38,61 @@ echo "<file contents>" | cargo run -- adjudicate \
   --repo <path-to-outcome> --path src/components/Badge.tsx --intent "add Badge"
 ```
 
-`reach` is decided by the *same* `Policy` the showcase uses. Reversibility is real
-git: the tree must be clean, the change is committed on a green build or restored
-on a red one. Verification is the repository's own `npm run build` — run *inside*
-the envelope, so the proposer still cannot supply what it is judged by. This is
-the channel the [advisor](../advisor) (the untrusted Claude-driven brain)
-drives; it is the only way the brain can change a file.
+Reversibility is real git: the tree must be clean, the change is committed on a
+green build or restored on a red one. Verification is the repository's own `npm
+run build` — run *inside* the envelope, so the proposer still cannot supply what
+it is judged by. This is the channel the [advisor](../advisor) (the untrusted
+Claude-driven brain) drives; it is the only way the brain can change a file.
 
-## What you'll see
-
-An untrusted stub agent proposes eight changes — some good, some forbidden,
-unverified, unhealthy, or self-escalating. Every one passes through the single
-chokepoint and gets a deterministic verdict:
-
-```
-SUMMARY   committed=3  rejected=4  rolled_back=1
-DENIALS   change_shape=1  immutable_policy=1  reach=2
-REVERTED  task_completion
-```
-
-The point: **none of these outcomes depend on the agent being
-well-behaved.** The boundary produces them regardless.
+The changeset lifecycle (`begin` → `stage`* → `commit`, ADR 0005), workspace
+establishment (`establish`), dependency maintenance (`refresh-deps`), abandoning
+an open changeset (`reset`), and the runtime error-rate watchdog (`monitor`) are
+the rest of the surface — run `cargo run` with no arguments for the full list.
 
 ## How it works
 
-Every proposed action flows through one function — `Harness::enact` — which is
-the entire trust boundary:
+Every proposed write is decided by one pure function — `Policy::evaluate` — before
+it ever touches disk:
 
-1. **Policy check** (deterministic). The action-only invariants (`reach`,
-   `immutable_policy`). If any is violated, the action is denied and never touches
-   the world.
-2. **Verification gate.** For a deploy, the verification result (typecheck, tests,
-   UI) is read from a **trusted verifier** — never the agent's self-report, which
-   it cannot even express. Unverified ⇒ rejected. Fails closed.
-3. **Reversible effect.** An allowed action is turned into an effect that is
-   applied *and* yields an undo handle — holding the undo is the precondition for
-   committing anything.
-4. **Outcome gate.** After a deploy, health is read from **trusted telemetry**
-   (never from the agent) and judged against **trusted guardrails**. A breach
-   reverts automatically — no human, no agent cooperation. Fails closed.
+1. **Policy check** (deterministic). The action-only reach invariant. If violated,
+   the action is denied and never touches the working tree.
+2. **Apply and verify.** An allowed write is applied to the working tree and
+   verified by the repository's own build (`worktree::BuildVerifier`) — never the
+   agent's self-report, which it cannot even express. Unverified ⇒ reverted. Fails
+   closed.
+3. **Commit or revert.** On green the changeset is committed with git itself as
+   the reversibility substrate; on red the tree is reset back to `HEAD`.
+4. **Runtime watchdog.** After a deploy, `envelope monitor` reads trusted
+   telemetry (never from the agent) and reverts automatically on an error-rate
+   breach — no human, no agent cooperation. Fails closed.
 
 ### The invariants
 
 | Invariant | Rule | Module |
 |---|---|---|
 | `reach` | Deny-by-default write allowlist; forbidden zones (backend client, secrets, deploy config, the core); traversal-safe | `src/invariants/reach.rs` |
-| `change_shape` | No deploy without typecheck + tests + UI verification | `src/invariants/change_shape.rs` |
-| `immutable_policy` | The agent cannot modify the rules that bound it | `src/policy.rs` |
+| design conformance | Staged UI files must compose the design system, not fork it | `src/design.rs` |
 
-Two further guarantees hold at **compile time**, not by runtime check: the agent
-cannot supply or fake its own verification or health metrics (both unrepresentable
-in the `Action` type), and it cannot mutate the world outside `enact` (`&mut
-World` is never exposed).
+A further guarantee holds at **compile time**, not by runtime check: the agent
+cannot supply or fake its own verification or health metrics — both are
+unrepresentable in the `Action` type, which can express nothing but a write.
 
 ## Project layout
 
 ```
 src/
-  harness.rs        the trusted chokepoint: the only path from proposal to effect
-  policy.rs         the action-only rule set (reach, immutable_policy)
-  invariants/       the individual rules (reach, change_shape)
-  guardrails.rs     trusted outcome-gate policy (SLOs)
-  telemetry.rs      trusted source of production health (agent has no handle)
-  verifier.rs       trusted source of verification (CI + agentic UI checks)
-  reversible.rs     reversible effects + the encapsulated World (in-memory harness)
+  policy.rs         the action-only rule set (reach)
+  invariants/       the individual rules (reach)
   worktree.rs       the REAL git-backed effector + build verifier (adjudicate path)
-  decision_log.rs   append-only audit trail
-  types.rs          the closed Action / Verdict / Outcome model
-  agent.rs          a STUB untrusted agent (stands in for a real model)
-  main.rs           wires it together; runs the showcase, or `adjudicate` for real
+  design.rs         design-conformance stage, invoked from worktree.rs
+  runtime.rs        the runtime error-rate watchdog (envelope monitor)
+  types.rs          the closed Action / Verdict model
+  main.rs           the CLI: wires the subcommands to the trusted core
 ```
 
 The real untrusted agent lives in a separate project — [advisor](../advisor),
-a Claude-driven loop — and reaches the world only through `envelope adjudicate`.
+a Claude-driven loop — and reaches the world only through `envelope adjudicate`
+and the changeset lifecycle commands.
 
 ## Documentation
 

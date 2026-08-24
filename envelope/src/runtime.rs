@@ -23,11 +23,9 @@ use std::path::Path;
 
 use crate::worktree::{self, ENVELOPE_IDENT};
 
-/// A guardrail ceiling used only when the telemetry file supplies no
-/// `threshold` of its own and the caller passes no `--threshold` override.
-/// Matches `guardrails::Guardrails::standard`'s `error_rate` ceiling, so a
-/// production deploy and a runtime monitor read the same default SLO absent
-/// more specific instruction.
+/// The default SLO ceiling for the observed error rate, used only when the
+/// telemetry file supplies no `threshold` of its own and the caller passes no
+/// `--threshold` override.
 const DEFAULT_ERROR_RATE_THRESHOLD: f64 = 0.02;
 
 /// What the monitor decided, mirroring [`crate::worktree::Disposition`] in

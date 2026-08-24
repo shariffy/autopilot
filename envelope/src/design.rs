@@ -3,7 +3,7 @@
 //! in `src/design-system/`, rather than smuggling in ad-hoc raw markup.
 //!
 //! **Why this cannot be a `reach` invariant.** Reach sees only
-//! `Action::WriteFile { path, bytes }` — a path and a byte COUNT, never the
+//! `Action::WriteFile { path }` — a path, never the
 //! bytes themselves (see `invariants/reach.rs`'s module doc: reach is about
 //! WHERE the agent may write, never what it writes). Whether a file opens a raw
 //! `<button>` instead of the design system's `Button` is a property of its
