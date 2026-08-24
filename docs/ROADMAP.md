@@ -109,7 +109,7 @@ the key.
 agent read them, chose its own strategy — greenfield React+Vite+TS over local
 fixtures, including its own internal UI component library, no predecessor to
 adopt (per [ADR 0005](adr/0005-changesets-clearances-and-observation-driven-genesis.md)
-§3 the choice is the agent's) — and landed **five** green, atomic, reach-bounded
+§3 the choice is the agent's) — and landed **six** green, atomic, reach-bounded
 genesis changesets into a new outcome, opening `docs/adr/0001` in the outcome
 with its strategy per [ADR 0006](adr/0006-inputs-and-decisions-as-append-only-ledgers.md)
 §3.
@@ -120,6 +120,17 @@ and the project's audit journal, which records — across both passes — the
 establish, every stage, and every commit attempt including retries after a
 BUILD_FAILED, plus one `refresh_dependencies` call: the agent reaching for the
 dependency-maintenance tool from ADR 0009 on its own, unprompted.
+
+**Attribution note.** The demo outcome's `git log` carries one commit —
+`b9db0cf`, the Playwright e2e suite — that announces itself as operator work in
+its subject line while carrying the envelope's identity as both author and
+committer. [ADR 0010](adr/0010-envelope-attributes-the-trust-roles.md) exists to
+make that split mean untrusted-proposer / trusted-enactor, so trusted human
+setup wearing the envelope's identity blurs exactly the distinction it draws.
+Either the commit should carry the operator's identity, as the other two
+operator commits do, or ADR 0010 should say the envelope's identity also covers
+trusted setup performed through it. Recorded here rather than silently left in
+the counts.
 
 **Exit criterion — met.** Six committed genesis changesets exist in the outcome,
 each build green, and the audit ledger records the establish→stage→commit

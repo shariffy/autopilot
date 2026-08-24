@@ -75,7 +75,7 @@ Runnable, not yet production-hardened — and it has run. On 2026-07-25 the advi
 took a small admin console from nothing to a working app: it read three seeded
 observations, chose its own strategy (greenfield React+Vite+TS over local
 fixtures, including building its own internal UI component library), and landed
-**5 green, atomic genesis changesets** plus a self-authored ADR, for $2.13 over
+**6 green, atomic genesis changesets** plus a self-authored ADR, for $2.13 over
 77 turns, none of it requiring the agent to be trustworthy — every commit passed
 through the envelope's own build gate. See
 [docs/runs/0001-first-light.md](docs/runs/0001-first-light.md).
@@ -85,15 +85,21 @@ The outcome it produces is a real, separate repository —
 — and its `git log` is the whole demonstration, told as one continuous history
 rather than scattered across repos: the untrusted **advisor** as author, the
 trusted **envelope** as committer, on every change the system landed, in order.
-Of 13 commits, only **2 are the operator's**, each doing only what the agent
-structurally cannot: seeding the frozen test oracle a runtime fix is judged
-against (never agent-writable, under any clearance), and the one change
-deliberately not agent-authored either — an agent given the same feature as a
-plain, non-leading maintenance ask wrote it safely on its own, unprompted
-either way, so reproducing a "shipped and crashed" scenario honestly meant
-constructing it as trusted setup rather than coaxing a bug out of a later run.
-The design system and even the README both landed as the agent's own work
-under genesis, so no later phase needed further seeding at all:
+Of 14 commits, **9 are the agent's**, each landed through the envelope's build
+gate. **2 carry the operator's identity**, doing only what the agent structurally
+cannot: seeding the frozen test oracle a runtime fix is judged against (never
+agent-writable under any clearance), and constructing the "shipped and crashed"
+scenario as trusted setup — an agent given that same feature as a plain,
+non-leading maintenance ask wrote it safely on its own, so reproducing the
+incident honestly meant seeding it rather than coaxing a bug out of a later run.
+**2 are the envelope acting alone**: the establish baseline, and the runtime-trip
+revert. The fourteenth — the Playwright e2e suite — is operator setup that
+carries the *envelope's* identity as author and committer rather than the
+operator's. That is an attribution bug against [ADR 0010](docs/adr/0010-envelope-attributes-the-trust-roles.md),
+whose whole purpose is to make the author/committer split mean
+untrusted-proposer / trusted-enactor; it is listed here rather than quietly
+counted as agent work. The design system and even the README both landed as the
+agent's own work under genesis, so no later phase needed further seeding at all:
 
 1. **Genesis** — the app built from nothing, including its own component library.
 2. **Autonomous maintenance** — a sortable-columns feature landed from a real
